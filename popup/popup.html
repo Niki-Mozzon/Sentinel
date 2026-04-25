@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentinel</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="logo">◉</span>
+    <span class="title">Sentinel</span>
+    <label class="toggle" title="Enable / disable overlay">
+      <input type="checkbox" id="enabled">
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <section>
+    <h3>Console</h3>
+    <label class="row">
+      <span>Errors <em>(console.error, uncaught, rejections)</em></span>
+      <label class="toggle">
+        <input type="checkbox" id="showConsoleErrors">
+        <span class="slider"></span>
+      </label>
+    </label>
+    <label class="row">
+      <span>Warnings <em>(console.warn)</em></span>
+      <label class="toggle">
+        <input type="checkbox" id="showConsoleWarns">
+        <span class="slider"></span>
+      </label>
+    </label>
+  </section>
+
+  <section>
+    <h3>Network</h3>
+    <label class="row">
+      <span>Show failed requests</span>
+      <label class="toggle">
+        <input type="checkbox" id="showNetwork">
+        <span class="slider"></span>
+      </label>
+    </label>
+    <label class="row" id="row-threshold">
+      <span>Minimum status</span>
+      <select id="networkMinStatus">
+        <option value="0">All failures (0, 4xx, 5xx)</option>
+        <option value="400">4xx and 5xx only</option>
+        <option value="500">5xx only</option>
+      </select>
+    </label>
+  </section>
+
+  <section>
+    <h3>Behaviour</h3>
+    <label class="row">
+      <span>Clear on navigation</span>
+      <label class="toggle">
+        <input type="checkbox" id="clearOnNav">
+        <span class="slider"></span>
+      </label>
+    </label>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

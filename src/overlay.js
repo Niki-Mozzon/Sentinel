@@ -23,10 +23,14 @@
   let isExpanded = false;
   let domReady   = false;
 
+  let host    = null;
   let shadow  = null;
   let badgeEl = null;
   let panelEl = null;
   let listEl  = null;
+  let modalEl     = null;
+  let modalBodyEl = null;
+  let currentModalEntry = null;
 
   // ── Settings ───────────────────────────────────────────────────────────────
 
@@ -85,9 +89,12 @@
       lineno:     ev.lineno     || null,
       stack:      ev.stack      || null,
       storeId:    ev.storeId    != null ? ev.storeId : null,
+      reqHeaders: ev.reqHeaders || null,
+      reqBody:    ev.reqBody    || null,
+      resHeaders: ev.resHeaders || null,
+      resBody:    ev.resBody    || null,
       timestamp:  ev.timestamp  || Date.now(),
-      count:      1,
-      expanded:   false
+      count:      1
     });
 
     if (entries.length > (settings.maxEntries || 100)) entries.shift();
@@ -145,23 +152,15 @@
   // ── Entry rendering ────────────────────────────────────────────────────────
 
   function renderEntry(e) {
-    const cls      = entryClass(e);
-    const icon     = entryIcon(e);
-    const label    = entryLabel(e);
-    const countHtml = e.count > 1 ? '<span class="count">×' + e.count + '</span>' : '';
-    const time     = formatTime(e.timestamp);
-    const hasDetail = hasExpandableDetail(e);
-    const chevron  = hasDetail
-      ? '<span class="chevron">' + (e.expanded ? '▾' : '▸') + '</span>'
-      : '';
+    const cls        = entryClass(e);
+    const icon       = entryIcon(e);
+    const label      = entryLabel(e);
+    const countHtml  = e.count > 1 ? '<span class="count">×' + e.count + '</span>' : '';
+    const time       = formatTime(e.timestamp);
+    const hasDetail  = hasExpandableDetail(e);
+    const chevron    = hasDetail ? '<span class="chevron">▸</span>' : '';
 
-    let detailHtml = '';
-    if (e.expanded) {
-      detailHtml = '<div class="detail">' + buildDetailHtml(e) + '</div>';
-    }
-
-    return '<div class="entry ' + cls + (hasDetail ? ' expandable' : '') +
-           (e.expanded ? ' open' : '') + '" data-id="' + e.id + '">' +
+    return '<div class="entry ' + cls + (hasDetail ? ' expandable' : '') + '" data-id="' + e.id + '">' +
       '<div class="emain">' +
         chevron +
         '<span class="eicon">' + icon + '</span>' +
@@ -169,60 +168,112 @@
         countHtml +
         '<span class="etime">' + time + '</span>' +
       '</div>' +
-      detailHtml +
     '</div>';
   }
 
   function hasExpandableDetail(e) {
-    if (e.kind === 'network') return !!(e.url || e.statusText);
-    return !!(e.stack || e.filename);
+    if (e.kind === 'network') return true;
+    return !!(e.stack || e.filename || e.message);
   }
 
-  function buildDetailHtml(e) {
+  // ── Modal ──────────────────────────────────────────────────────────────────
+
+  function showModal(e) {
+    currentModalEntry = e;
+    const titleEl = modalEl.querySelector('.modal-title');
+    if (titleEl) titleEl.textContent = modalTitle(e);
+    const replayBtn = modalEl.querySelector('[data-action="replay"]');
+    if (replayBtn) replayBtn.style.display = e.storeId != null ? '' : 'none';
+    if (replayBtn) replayBtn.setAttribute('data-store-id', e.storeId != null ? e.storeId : '');
+    modalBodyEl.innerHTML = buildModalHtml(e);
+    Object.assign(host.style, { bottom: '0', right: '0', left: '0', top: '0' });
+    modalEl.style.display = '';
+  }
+
+  function hideModal() {
+    currentModalEntry = null;
+    modalEl.style.display = 'none';
+    Object.assign(host.style, { bottom: '16px', right: '16px', left: '', top: '' });
+  }
+
+  function modalTitle(e) {
+    if (e.kind === 'network') return (e.method || 'GET') + ' ' + truncate(e.url || '', 70);
+    if (e.kind === 'uncaught') return 'Uncaught Error';
+    if (e.kind === 'rejection') return 'Unhandled Rejection';
+    return e.level === 'warn' ? 'Console Warning' : 'Console Error';
+  }
+
+  function buildModalHtml(e) {
+    var sections = [];
     if (e.kind === 'network') {
-      const fullUrl   = escHtml(e.url || '');
-      const statusTxt = e.statusText ? '<div class="dmeta">' + escHtml(e.statusText) + '</div>' : '';
-      const copyBtn   = e.url
-        ? '<button class="abtn" data-action="copy-url" data-url="' + escAttr(e.url) + '">Copy URL</button>'
-        : '';
-      return '<div class="durl">' + fullUrl + '</div>' + statusTxt +
-             (copyBtn ? '<div class="dactions">' + copyBtn + '</div>' : '');
+      sections.push(modalSection('Request', escHtml((e.method || 'GET') + ' ' + (e.url || ''))));
+      if (e.reqHeaders) sections.push(modalSection('Request Headers', formatHeaders(e.reqHeaders)));
+      if (e.reqBody)    sections.push(modalSection('Request Body',    formatBody(e.reqBody)));
+      const statusStr = (e.status === 0 ? 'Network Error' : String(e.status)) +
+                        (e.statusText ? ' ' + e.statusText : '');
+      sections.push(modalSection('Response', escHtml(statusStr)));
+      if (e.resHeaders) sections.push(modalSection('Response Headers', formatHeaders(e.resHeaders)));
+      if (e.resBody)    sections.push(modalSection('Response Body',    formatBody(e.resBody)));
+      if (e.stack)      sections.push(modalSection('Call Stack',       escHtml(e.stack)));
+    } else {
+      sections.push(modalSection('Message', escHtml(e.message || '')));
+      if (e.stack) {
+        sections.push(modalSection('Stack Trace', escHtml(e.stack)));
+      } else if (e.filename && e.lineno) {
+        sections.push(modalSection('Location', escHtml(e.filename + ':' + e.lineno)));
+      }
     }
+    return sections.join('');
+  }
 
-    // Console / uncaught / rejection
-    let stackHtml = '';
-    if (e.stack) {
-      stackHtml = '<pre class="dstack">' + escHtml(e.stack) + '</pre>';
-    } else if (e.filename && e.lineno) {
-      stackHtml = '<div class="dmeta">' + escHtml(e.filename) + ':' + e.lineno + '</div>';
+  function modalSection(title, contentHtml) {
+    return '<div class="msec">' +
+      '<div class="msec-title">' + escHtml(title) + '</div>' +
+      '<pre class="msec-body">' + contentHtml + '</pre>' +
+    '</div>';
+  }
+
+  function formatHeaders(obj) {
+    if (!obj || typeof obj !== 'object') return '';
+    return escHtml(Object.keys(obj).map(function (k) {
+      return k + ': ' + obj[k];
+    }).join('\n'));
+  }
+
+  function formatBody(body) {
+    if (!body) return '';
+    var str = String(body);
+    try {
+      return escHtml(JSON.stringify(JSON.parse(str), null, 2));
+    } catch (_) {
+      return escHtml(str);
     }
-
-    const replayBtn = e.storeId != null
-      ? '<button class="abtn" data-action="replay" data-store-id="' + e.storeId + '">↗ Log to Console</button>'
-      : '';
-
-    return stackHtml + (replayBtn ? '<div class="dactions">' + replayBtn + '</div>' : '');
   }
 
-  function entryClass(e) {
-    if (e.kind === 'network') return 'net';
-    if (e.level === 'warn')   return 'warn';
-    if (e.kind === 'rejection') return 'rej';
-    return 'err';
-  }
-
-  function entryIcon(e) {
-    if (e.kind === 'network') return '⬡';
-    if (e.level === 'warn')   return '⚠';
-    return '●';
-  }
-
-  function entryLabel(e) {
+  function buildModalText(e) {
+    if (!e) return '';
+    var lines = [];
     if (e.kind === 'network') {
-      const status = e.status === 0 ? 'ERR' : e.status;
-      return (e.method || 'REQ') + ' ' + truncate(e.url || '', 55) + ' · ' + status;
+      lines.push('REQUEST: ' + (e.method || 'GET') + ' ' + (e.url || ''));
+      if (e.reqHeaders) {
+        lines.push('\nREQUEST HEADERS:');
+        Object.keys(e.reqHeaders).forEach(function (k) { lines.push(k + ': ' + e.reqHeaders[k]); });
+      }
+      if (e.reqBody) { lines.push('\nREQUEST BODY:'); lines.push(e.reqBody); }
+      lines.push('\nRESPONSE: ' + (e.status === 0 ? 'Network Error' : e.status) +
+                 (e.statusText ? ' ' + e.statusText : ''));
+      if (e.resHeaders) {
+        lines.push('\nRESPONSE HEADERS:');
+        Object.keys(e.resHeaders).forEach(function (k) { lines.push(k + ': ' + e.resHeaders[k]); });
+      }
+      if (e.resBody)  { lines.push('\nRESPONSE BODY:');  lines.push(e.resBody); }
+      if (e.stack)    { lines.push('\nCALL STACK:');     lines.push(e.stack); }
+    } else {
+      lines.push('MESSAGE: ' + (e.message || ''));
+      if (e.stack) { lines.push('\nSTACK:'); lines.push(e.stack); }
+      else if (e.filename) lines.push('LOCATION: ' + e.filename + ':' + e.lineno);
     }
-    return truncate(e.message || '', 90);
+    return lines.join('\n');
   }
 
   // ── Action handling ────────────────────────────────────────────────────────
@@ -236,15 +287,19 @@
       feedback(btn, '✓ Logged');
     }
 
-    if (action === 'copy-url') {
-      const url = btn.getAttribute('data-url');
+    if (action === 'copy-modal') {
+      const text = buildModalText(currentModalEntry);
       try {
-        navigator.clipboard.writeText(url).then(function () {
+        navigator.clipboard.writeText(text).then(function () {
           feedback(btn, '✓ Copied');
         });
       } catch (_) {
         feedback(btn, '✗ Error');
       }
+    }
+
+    if (action === 'close-modal') {
+      hideModal();
     }
   }
 
@@ -364,7 +419,8 @@
   font-family: inherit;
   transition: background 0.1s, color 0.1s;
 }
-.pbtn:hover { background: rgba(255,255,255,0.12); color: #d0d0d8; }
+.pbtn:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #d0d0d8; }
+.pbtn:disabled { opacity: 0.5; cursor: default; }
 .pbtn-close { padding: 1px 7px; font-size: 14px; }
 
 .plist {
@@ -383,7 +439,6 @@
 }
 .entry.expandable { cursor: pointer; }
 .entry.expandable:hover { background: rgba(255,255,255,0.02); }
-.entry.open { background: rgba(255,255,255,0.025); }
 
 .emain {
   display: flex;
@@ -413,64 +468,94 @@
 .count { font-size: 10px; color: #505060; flex-shrink: 0; }
 .etime { font-size: 10px; color: #454555; flex-shrink: 0; }
 
-/* ── Expanded detail ── */
-.detail {
-  margin-top: 4px;
-  padding: 6px 8px 6px 25px;
-  background: rgba(0,0,0,0.2);
-  border-radius: 4px;
-}
-
-.dstack {
-  margin: 0;
-  font-size: 10px;
-  color: #555568;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 160px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.1) transparent;
-}
-.dstack::-webkit-scrollbar { width: 3px; }
-.dstack::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-
-.durl {
-  font-size: 10px;
-  color: #7777aa;
-  word-break: break-all;
-}
-.dmeta {
-  margin-top: 2px;
-  font-size: 10px;
-  color: #505060;
-}
-
-.dactions {
-  margin-top: 6px;
-  display: flex;
-  gap: 6px;
-}
-.abtn {
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.10);
-  color: #9090a8;
-  cursor: pointer;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-family: inherit;
-  transition: background 0.1s, color 0.1s;
-}
-.abtn:hover:not(:disabled) { background: rgba(255,255,255,0.14); color: #d0d0e8; }
-.abtn:disabled { opacity: 0.5; cursor: default; }
-
 .empty {
   padding: 18px;
   text-align: center;
   color: #404050;
   font-size: 11px;
 }
+
+/* ── Modal ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483647;
+  pointer-events: auto;
+}
+.modal {
+  background: #0d0d11;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  width: 680px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+  overflow: hidden;
+  color: #d0d0d8;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.03);
+}
+.modal-title {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #606070;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-body {
+  overflow-y: auto;
+  flex: 1;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+.modal-body::-webkit-scrollbar { width: 4px; }
+.modal-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+.msec-title {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #505060;
+  margin-bottom: 4px;
+}
+.msec-body {
+  margin: 0;
+  font-size: 11px;
+  color: #c0c0d0;
+  background: rgba(0,0,0,0.3);
+  border-radius: 4px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+  font-family: inherit;
+}
+.msec-body::-webkit-scrollbar { width: 3px; }
+.msec-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 `;
 
   // ── DOM Setup ──────────────────────────────────────────────────────────────
@@ -520,28 +605,14 @@
       renderBadge();
     });
 
-    // Single delegated handler — no re-attachment needed after re-renders
     listEl.addEventListener('click', function (event) {
       const t = event.target;
       if (!t || typeof t.closest !== 'function') return;
-
-      // Action button click (copy URL, replay)
-      const btn = t.closest('[data-action]');
-      if (btn) {
-        event.stopPropagation();
-        handleAction(btn);
-        return;
-      }
-
-      // Entry row click = toggle expand
       const entryEl = t.closest('.entry[data-id]');
       if (entryEl) {
         const id = parseInt(entryEl.getAttribute('data-id'), 10);
         const e = entries.find(function (x) { return x.id === id; });
-        if (e && hasExpandableDetail(e)) {
-          e.expanded = !e.expanded;
-          renderList();
-        }
+        if (e && hasExpandableDetail(e)) showModal(e);
       }
     });
 
@@ -549,12 +620,39 @@
     panelEl.appendChild(listEl);
     root.appendChild(badgeEl);
     root.appendChild(panelEl);
+
+    // Modal
+    modalEl = document.createElement('div');
+    modalEl.className = 'modal-overlay';
+    modalEl.style.display = 'none';
+    modalEl.innerHTML =
+      '<div class="modal">' +
+        '<div class="modal-header">' +
+          '<span class="modal-title"></span>' +
+          '<button class="pbtn" data-action="replay" style="display:none">↗ Log to Console</button>' +
+          '<button class="pbtn" data-action="copy-modal">Copy All</button>' +
+          '<button class="pbtn pbtn-close" data-action="close-modal">×</button>' +
+        '</div>' +
+        '<div class="modal-body"></div>' +
+      '</div>';
+
+    modalBodyEl = modalEl.querySelector('.modal-body');
+
+    modalEl.addEventListener('click', function (event) {
+      const t = event.target;
+      if (!t || typeof t.closest !== 'function') return;
+      const btn = t.closest('[data-action]');
+      if (btn) { event.stopPropagation(); handleAction(btn); return; }
+      if (event.target === modalEl) hideModal();
+    });
+
     shadow.appendChild(styleEl);
     shadow.appendChild(root);
+    shadow.appendChild(modalEl);
   }
 
   function init() {
-    const host = document.createElement('div');
+    host = document.createElement('div');
     host.setAttribute('id', 'sentinel-shadow-host');
     Object.assign(host.style, {
       position: 'fixed',
@@ -569,6 +667,27 @@
     buildUI();
     domReady = true;
     render();
+  }
+
+  function entryClass(e) {
+    if (e.kind === 'network') return 'net';
+    if (e.level === 'warn')   return 'warn';
+    if (e.kind === 'rejection') return 'rej';
+    return 'err';
+  }
+
+  function entryIcon(e) {
+    if (e.kind === 'network') return '⬡';
+    if (e.level === 'warn')   return '⚠';
+    return '●';
+  }
+
+  function entryLabel(e) {
+    if (e.kind === 'network') {
+      const status = e.status === 0 ? 'ERR' : e.status;
+      return (e.method || 'REQ') + ' ' + truncate(e.url || '', 55) + ' · ' + status;
+    }
+    return truncate(e.message || '', 90);
   }
 
   if (document.readyState === 'loading') {

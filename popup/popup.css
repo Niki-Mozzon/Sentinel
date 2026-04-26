@@ -126,3 +126,25 @@ select:focus {
   transform: translateX(14px);
   background: #aa66ff;
 }
+
+/* ── Ignore rules ── */
+.rules-empty { font-size: 11px; color: #404050; padding: 4px 0; }
+.rule-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.rule-row:last-child { border-bottom: none; }
+.rule-icon { font-size: 10px; flex-shrink: 0; width: 14px; text-align: center; }
+.rule-icon.net  { color: #aa66ff; }
+.rule-icon.cons { color: #ff8080; }
+.rule-desc { flex: 1; font-size: 11px; color: #909098; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-del {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: #505060;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.rule-del:hover { background: rgba(255,85,85,0.12); border-color: rgba(255,85,85,0.3); color: #ff6666; }

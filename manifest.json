@@ -4,6 +4,12 @@
   "version": "0.1.0",
   "description": "No more thumbnailing your app just to read a stack trace. Console errors and failed requests, quietly delivered to your corner",
   "permissions": ["storage"],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {

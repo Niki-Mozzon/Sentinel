@@ -5,6 +5,9 @@
   const REPLAY_TYPE = '__SENTINEL_REPLAY__';
   const DEDUP_MS    = 500;
 
+  const ICON16 = chrome.runtime.getURL('icons/icon16.png');
+  const ICON_IMG = '<img class="sicon-logo" src="' + ICON16 + '" alt="">';
+
   const DEFAULTS = {
     enabled: true,
     showConsoleErrors: true,
@@ -17,7 +20,8 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
 
-  let settings = Object.assign({}, DEFAULTS);
+  let settings    = Object.assign({}, DEFAULTS);
+  let ignoreRules = [];
   let entries  = [];
   let nextId   = 0;
   let isExpanded = false;
@@ -39,7 +43,15 @@
       settings = Object.assign({}, DEFAULTS, result);
       if (domReady) render();
     });
+    chrome.storage.sync.get({ ignoreRules: [] }, function (result) {
+      ignoreRules = result.ignoreRules || [];
+    });
     chrome.storage.onChanged.addListener(function (changes) {
+      if (changes.ignoreRules) {
+        ignoreRules = changes.ignoreRules.newValue || [];
+        if (domReady) renderList();
+        return;
+      }
       Object.keys(changes).forEach(function (k) { settings[k] = changes[k].newValue; });
       if (domReady) render();
     });
@@ -62,10 +74,40 @@
     return true;
   }
 
+  // ── Ignore rules ───────────────────────────────────────────────────────────
+
+  function matchesIgnoreRule(e) {
+    for (var i = 0; i < ignoreRules.length; i++) {
+      var r = ignoreRules[i];
+      if (r.kind === 'network' && e.kind === 'network') {
+        if (urlPath(e.url || '') === r.urlPath && r.status === e.status) return true;
+      } else if (r.kind === 'console' &&
+                 (e.kind === 'console' || e.kind === 'uncaught' || e.kind === 'rejection')) {
+        if ((e.message || '').toLowerCase().indexOf(r.messageContains) !== -1) return true;
+      }
+    }
+    return false;
+  }
+
+  function ignoreEntry(e) {
+    var rule = e.kind === 'network'
+      ? { id: genRuleId(), kind: 'network', urlPath: urlPath(e.url || ''), status: e.status, createdAt: Date.now() }
+      : { id: genRuleId(), kind: 'console', messageContains: (e.message || '').slice(0, 80).trim().toLowerCase(), createdAt: Date.now() };
+    ignoreRules = ignoreRules.concat([rule]);
+    try { chrome.storage.sync.set({ ignoreRules: ignoreRules }); } catch (_) {}
+    renderList();
+    renderBadge();
+  }
+
+  function genRuleId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
   // ── Entry management ───────────────────────────────────────────────────────
 
   function addEntry(ev) {
     if (!shouldCapture(ev)) return;
+    if (matchesIgnoreRule(ev)) return;
 
     const last = entries[entries.length - 1];
     if (last && last.kind === ev.kind && last.message === ev.message &&
@@ -127,26 +169,25 @@
     if (!badgeEl) return;
     let errors = 0, warns = 0, network = 0;
     entries.forEach(function (e) {
+      if (matchesIgnoreRule(e)) return;
       if (e.kind === 'network') network++;
       else if (e.level === 'warn') warns++;
       else errors++;
     });
-    if (!settings.enabled || entries.length === 0) { badgeEl.style.display = 'none'; return; }
+    const visible = errors + warns + network;
+    if (!settings.enabled || visible === 0) { badgeEl.style.display = 'none'; return; }
     badgeEl.style.display = '';
-    const parts = [];
-    if (errors  > 0) parts.push('<span class="be">● ' + errors  + '</span>');
-    if (warns   > 0) parts.push('<span class="bw">⚠ ' + warns   + '</span>');
-    if (network > 0) parts.push('<span class="bn">⬡ ' + network + '</span>');
-    badgeEl.innerHTML = parts.join('');
+    badgeEl.innerHTML = ICON_IMG + '<span class="bcount">' + visible + '</span>';
   }
 
   function renderList() {
     if (!listEl) return;
-    if (entries.length === 0) {
+    const visible = entries.slice().reverse().filter(function (e) { return !matchesIgnoreRule(e); });
+    if (visible.length === 0) {
       listEl.innerHTML = '<div class="empty">No errors captured yet</div>';
       return;
     }
-    listEl.innerHTML = entries.slice().reverse().map(renderEntry).join('');
+    listEl.innerHTML = visible.map(renderEntry).join('');
   }
 
   // ── Entry rendering ────────────────────────────────────────────────────────
@@ -173,8 +214,9 @@
         '<span class="emsg">' + escHtml(truncate(e.message || '', 90)) + '</span>';
     }
 
+    const ignoreBtn = '<button class="pbtn ignore-btn" data-action="ignore" data-id="' + e.id + '" title="Ignore this error">×</button>';
     return '<div class="entry ' + cls + (hasDetail ? ' expandable' : '') + '" data-id="' + e.id + '">' +
-      '<div class="emain">' + chevron + bodyHtml + countHtml + '<span class="etime">' + time + '</span></div>' +
+      '<div class="emain">' + chevron + bodyHtml + countHtml + ignoreBtn + '<span class="etime">' + time + '</span></div>' +
     '</div>';
   }
 
@@ -199,7 +241,7 @@
   function showModal(e) {
     currentModalEntry = e;
     const titleEl = modalEl.querySelector('.modal-title');
-    if (titleEl) titleEl.textContent = modalTitle(e);
+    if (titleEl) titleEl.innerHTML = ICON_IMG + escHtml(modalTitle(e));
     const replayBtn = modalEl.querySelector('[data-action="replay"]');
     if (replayBtn) replayBtn.style.display = e.storeId != null ? '' : 'none';
     if (replayBtn) replayBtn.setAttribute('data-store-id', e.storeId != null ? e.storeId : '');
@@ -319,6 +361,16 @@
     if (action === 'close-modal') {
       hideModal();
     }
+
+    if (action === 'ignore') {
+      const id = parseInt(btn.getAttribute('data-id'), 10);
+      const e = entries.find(function (x) { return x.id === id; });
+      if (e) ignoreEntry(e);
+    }
+
+    if (action === 'ignore-modal') {
+      if (currentModalEntry) { ignoreEntry(currentModalEntry); hideModal(); }
+    }
   }
 
   function feedback(btn, text) {
@@ -388,9 +440,7 @@
   box-shadow: 0 2px 12px rgba(0,0,0,0.4);
 }
 .badge:hover { background: rgba(24,24,30,0.96); transform: scale(1.05); }
-.be { color: #ff5555; }
-.bw { color: #ffaa33; }
-.bn { color: #aa66ff; }
+.bcount { color: #d0d0d8; font-size: 12px; font-weight: 600; }
 
 /* ── Panel ── */
 .panel {
@@ -504,6 +554,21 @@
 .count { font-size: 10px; color: #505060; flex-shrink: 0; }
 .etime { font-size: 10px; color: #454555; flex-shrink: 0; }
 
+.ignore-btn {
+  opacity: 0;
+  padding: 0 5px;
+  font-size: 13px;
+  line-height: 1;
+  background: transparent;
+  border-color: transparent;
+  color: #505060;
+  flex-shrink: 0;
+  transition: opacity 0.1s, color 0.1s;
+  pointer-events: none;
+}
+.entry:hover .ignore-btn { opacity: 1; pointer-events: auto; }
+.entry:hover .ignore-btn:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.2); }
+
 .empty {
   padding: 18px;
   text-align: center;
@@ -546,6 +611,9 @@
 }
 .modal-title {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1px;
@@ -555,6 +623,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sicon-logo { width: 14px; height: 14px; flex-shrink: 0; display: block; }
 .modal-body {
   overflow-y: auto;
   flex: 1;
@@ -623,7 +692,7 @@
     const header = document.createElement('div');
     header.className = 'pheader';
     header.innerHTML =
-      '<span class="ptitle">Sentinel</span>' +
+      ICON_IMG + '<span class="ptitle">Sentinel</span>' +
       '<button class="pbtn" id="en-clear">Clear</button>' +
       '<button class="pbtn pbtn-close" id="en-close">×</button>';
 
@@ -669,6 +738,8 @@
     listEl.addEventListener('click', function (event) {
       const t = event.target;
       if (!t || typeof t.closest !== 'function') return;
+      const btn = t.closest('[data-action]');
+      if (btn) { handleAction(btn); return; }
       const entryEl = t.closest('.entry[data-id]');
       if (entryEl) {
         const id = parseInt(entryEl.getAttribute('data-id'), 10);
@@ -691,6 +762,7 @@
         '<div class="modal-header">' +
           '<span class="modal-title"></span>' +
           '<button class="pbtn" data-action="replay" style="display:none">↗ Log to Console</button>' +
+          '<button class="pbtn" data-action="ignore-modal">Ignore</button>' +
           '<button class="pbtn" data-action="copy-modal">Copy All</button>' +
           '<button class="pbtn pbtn-close" data-action="close-modal">×</button>' +
         '</div>' +

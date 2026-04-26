@@ -152,23 +152,41 @@
   // ── Entry rendering ────────────────────────────────────────────────────────
 
   function renderEntry(e) {
-    const cls        = entryClass(e);
-    const icon       = entryIcon(e);
-    const label      = entryLabel(e);
-    const countHtml  = e.count > 1 ? '<span class="count">×' + e.count + '</span>' : '';
-    const time       = formatTime(e.timestamp);
-    const hasDetail  = hasExpandableDetail(e);
-    const chevron    = hasDetail ? '<span class="chevron">▸</span>' : '';
+    const cls       = entryClass(e);
+    const hasDetail = hasExpandableDetail(e);
+    const chevron   = hasDetail ? '<span class="chevron">▸</span>' : '';
+    const countHtml = e.count > 1 ? '<span class="count">×' + e.count + '</span>' : '';
+    const time      = formatTime(e.timestamp);
+
+    let bodyHtml;
+    if (e.kind === 'network') {
+      const status  = e.status === 0 ? 'ERR' : String(e.status);
+      const path    = escHtml(truncate(urlPath(e.url || ''), 80));
+      bodyHtml =
+        '<span class="eicon">⬡</span>' +
+        '<span class="emethod">' + escHtml(e.method || 'REQ') + '</span>' +
+        '<span class="estatus ' + statusClass(e.status) + '">' + status + '</span>' +
+        '<span class="epath">' + path + '</span>';
+    } else {
+      bodyHtml =
+        '<span class="eicon">' + entryIcon(e) + '</span>' +
+        '<span class="emsg">' + escHtml(truncate(e.message || '', 90)) + '</span>';
+    }
 
     return '<div class="entry ' + cls + (hasDetail ? ' expandable' : '') + '" data-id="' + e.id + '">' +
-      '<div class="emain">' +
-        chevron +
-        '<span class="eicon">' + icon + '</span>' +
-        '<span class="emsg">' + escHtml(label) + '</span>' +
-        countHtml +
-        '<span class="etime">' + time + '</span>' +
-      '</div>' +
+      '<div class="emain">' + chevron + bodyHtml + countHtml + '<span class="etime">' + time + '</span></div>' +
     '</div>';
+  }
+
+  function urlPath(url) {
+    try { return new URL(url).pathname; } catch (_) { return url; }
+  }
+
+  function statusClass(status) {
+    if (status === 0)                     return 'serr';
+    if (status >= 500 && status <= 599)   return 's5xx';
+    if (status >= 400 && status <= 499)   return 's4xx';
+    return 'sother';
   }
 
   function hasExpandableDetail(e) {
@@ -377,10 +395,13 @@
 /* ── Panel ── */
 .panel {
   pointer-events: auto;
+  position: relative;
   background: rgba(13,13,17,0.95);
   border: 1px solid rgba(255,255,255,0.09);
   border-radius: 8px;
   width: 460px;
+  min-width: 300px;
+  max-width: calc(100vw - 32px);
   max-height: 420px;
   display: flex;
   flex-direction: column;
@@ -390,6 +411,14 @@
   -webkit-backdrop-filter: blur(10px);
   color: #d0d0d8;
 }
+.resize-handle {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+.resize-handle:hover, .resize-handle.dragging { background: rgba(170,102,255,0.25); }
 
 .pheader {
   display: flex;
@@ -462,8 +491,15 @@
 }
 .entry.err .emsg  { color: #ff8080; }
 .entry.warn .emsg { color: #ffcc66; }
-.entry.net .emsg  { color: #cc99ff; }
 .entry.rej .emsg  { color: #ff9999; }
+
+.emethod { font-size: 10px; color: #606070; flex-shrink: 0; font-weight: 700; letter-spacing: 0.5px; }
+.estatus { font-size: 11px; font-weight: 700; flex-shrink: 0; min-width: 26px; }
+.estatus.serr  { color: #ff5555; }
+.estatus.s5xx  { color: #ff5555; }
+.estatus.s4xx  { color: #ffaa33; }
+.estatus.sother { color: #55cc88; }
+.epath { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #9988cc; }
 
 .count { font-size: 10px; color: #505060; flex-shrink: 0; }
 .etime { font-size: 10px; color: #454555; flex-shrink: 0; }
@@ -605,6 +641,31 @@
       renderBadge();
     });
 
+    // Left-edge resize handle
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'resize-handle';
+    panelEl.appendChild(resizeHandle);
+
+    let resizing = false, resizeStartX = 0, resizeStartW = 0;
+    resizeHandle.addEventListener('mousedown', function (e) {
+      resizing = true;
+      resizeStartX = e.clientX;
+      resizeStartW = panelEl.offsetWidth;
+      resizeHandle.classList.add('dragging');
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function (e) {
+      if (!resizing) return;
+      const delta = resizeStartX - e.clientX;
+      const w = Math.min(Math.max(resizeStartW + delta, 300), window.innerWidth - 32);
+      panelEl.style.width = w + 'px';
+    });
+    document.addEventListener('mouseup', function () {
+      if (!resizing) return;
+      resizing = false;
+      resizeHandle.classList.remove('dragging');
+    });
+
     listEl.addEventListener('click', function (event) {
       const t = event.target;
       if (!t || typeof t.closest !== 'function') return;
@@ -680,14 +741,6 @@
     if (e.kind === 'network') return '⬡';
     if (e.level === 'warn')   return '⚠';
     return '●';
-  }
-
-  function entryLabel(e) {
-    if (e.kind === 'network') {
-      const status = e.status === 0 ? 'ERR' : e.status;
-      return (e.method || 'REQ') + ' ' + truncate(e.url || '', 55) + ' · ' + status;
-    }
-    return truncate(e.message || '', 90);
   }
 
   if (document.readyState === 'loading') {

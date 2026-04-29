@@ -264,6 +264,7 @@
 
   function renderBadge() {
     if (!badgeEl) return;
+    if (isExpanded) { badgeEl.style.display = 'none'; return; }
     let errors = 0, warns = 0, network = 0;
     entries.forEach(function (e) {
       if (matchesIgnoreRule(e)) return;
@@ -274,6 +275,7 @@
     const visible = errors + warns + network;
     if (!settings.enabled || visible === 0) { badgeEl.style.display = 'none'; return; }
     badgeEl.style.display = '';
+    badgeEl.classList.toggle('unseen', hasUnseen);
     badgeEl.innerHTML = ICON_IMG + '<span class="bcount">' + visible + '</span>';
   }
 
@@ -597,7 +599,18 @@
   box-shadow: 0 2px 12px rgba(0,0,0,0.4);
 }
 .badge:hover { background: rgba(24,24,30,0.96); transform: scale(1.05); }
+.badge.unseen {
+  background: rgba(160,25,25,0.92);
+  border-color: rgba(255,80,80,0.3);
+  box-shadow: 0 2px 16px rgba(255,50,50,0.45);
+  animation: badge-pulse 2s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 2px 16px rgba(255,50,50,0.45); }
+  50%       { box-shadow: 0 2px 26px rgba(255,50,50,0.75); }
+}
 .bcount { color: #d0d0d8; font-size: 12px; font-weight: 600; }
+.badge.unseen .bcount { color: #fff; }
 
 /* ── Panel ── */
 .panel {
@@ -876,6 +889,7 @@
     badgeEl.style.display = 'none';
     badgeEl.addEventListener('click', function () {
       isExpanded = true;
+      hasUnseen  = false;
       panelEl.style.display = '';
       badgeEl.style.display = 'none';
       renderList();

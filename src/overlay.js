@@ -1007,6 +1007,10 @@
       if (event.target === modalEl) hideModal();
     });
 
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && modalEl.style.display !== 'none') hideModal();
+    });
+
     shadow.appendChild(styleEl);
     shadow.appendChild(root);
     shadow.appendChild(modalEl);
@@ -1041,6 +1045,13 @@
     if (e.kind === 'network') return '⬡';
     if (e.level === 'warn')   return '⚠';
     return '●';
+  }
+
+  function entryTooltip(e) {
+    if (e.kind === 'uncaught')   return 'Uncaught error';
+    if (e.kind === 'rejection')  return 'Unhandled promise rejection';
+    if (e.level === 'warn')      return 'Console warning';
+    return 'Console error';
   }
 
   if (document.readyState === 'loading') {

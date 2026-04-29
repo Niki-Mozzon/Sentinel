@@ -8,9 +8,19 @@
 
   var _origError = console.error;
   var _origWarn  = console.warn;
-  var _store     = new Map();
-  var _nextId    = 0;
-  var _suppress  = false;
+  var _origLog   = console.log;
+  var _origInfo  = console.info;
+  var _origDebug = console.debug;
+  var _store       = new Map();
+  var _nextId      = 0;
+  var _suppress    = false;
+  var _breadcrumbs = [];
+  var CRUMB_MAX    = 25;
+
+  function addCrumb(crumb) {
+    _breadcrumbs.push(crumb);
+    if (_breadcrumbs.length > CRUMB_MAX) _breadcrumbs.shift();
+  }
 
   function storeValue(value) {
     var id = _nextId++;
@@ -72,6 +82,7 @@
       var args = Array.prototype.slice.call(arguments);
       try { original.apply(console, args); } catch (_) {}
       if (_suppress) return;
+      addCrumb({ type: 'log', level: level, message: serialize(args).slice(0, 120), timestamp: Date.now() });
       var storeId = storeValue(args);
       post({
         kind: 'console',
@@ -80,8 +91,19 @@
         stack: new Error().stack || null,
         storeId: storeId,
         pageUrl: window.location.href,
+        breadcrumbs: _breadcrumbs.slice(),
         timestamp: Date.now()
       });
+    };
+  });
+
+  ['log', 'info', 'debug'].forEach(function (level) {
+    var orig = level === 'log' ? _origLog : level === 'info' ? _origInfo : _origDebug;
+    console[level] = function () {
+      var args = Array.prototype.slice.call(arguments);
+      try { orig.apply(console, args); } catch (_) {}
+      if (_suppress) return;
+      addCrumb({ type: 'log', level: level, message: serialize(args).slice(0, 120), timestamp: Date.now() });
     };
   });
 
@@ -99,6 +121,7 @@
       stack: event.error ? event.error.stack : null,
       storeId: storeId,
       pageUrl: window.location.href,
+      breadcrumbs: _breadcrumbs.slice(),
       timestamp: Date.now()
     });
   }, true);
@@ -116,8 +139,32 @@
       stack: reason instanceof Error ? reason.stack : null,
       storeId: storeId,
       pageUrl: window.location.href,
+      breadcrumbs: _breadcrumbs.slice(),
       timestamp: Date.now()
     });
+  }, true);
+
+  // ── Breadcrumb: Navigation ─────────────────────────────────────────────────
+
+  ['popstate', 'hashchange'].forEach(function (evt) {
+    window.addEventListener(evt, function () {
+      addCrumb({ type: 'nav', message: window.location.href, timestamp: Date.now() });
+    });
+  });
+
+  // ── Breadcrumb: Clicks ─────────────────────────────────────────────────────
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.tagName) return;
+    var desc = t.tagName.toLowerCase();
+    if (t.id) { desc += '#' + t.id; }
+    else if (t.className && typeof t.className === 'string' && t.className.trim()) {
+      desc += '.' + t.className.trim().split(/\s+/)[0];
+    }
+    var text = (t.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (text) desc += ' "' + text + '"';
+    addCrumb({ type: 'click', message: desc, timestamp: Date.now() });
   }, true);
 
   // ── XMLHttpRequest ─────────────────────────────────────────────────────────
@@ -152,6 +199,7 @@
     } catch (_) { xhr._en_reqBody = null; }
 
     xhr.addEventListener('loadend', function () {
+      addCrumb({ type: 'http', message: (xhr._en_method || 'GET') + ' ' + (xhr._en_url || '') + ' → ' + (xhr.status || 0), timestamp: Date.now() });
       if (xhr.status === 0 || xhr.status >= 400) {
         var resBody = null;
         try {
@@ -172,6 +220,7 @@
           resBody:    resBody,
           stack:      xhr._en_stack      || null,
           pageUrl:    xhr._en_pageUrl    || null,
+          breadcrumbs: _breadcrumbs.slice(),
           timestamp:  Date.now()
         });
       }
@@ -216,9 +265,11 @@
 
       return _fetch.apply(this, arguments).then(
         function (response) {
+          addCrumb({ type: 'http', message: method + ' ' + url + ' → ' + response.status, timestamp: Date.now() });
           if (!response.ok) {
             var resHeaders = headersToObj(response.headers);
             var ts = Date.now();
+            var crumbsSnap = _breadcrumbs.slice();
             response.clone().text().then(function (body) {
               post({
                 kind:       'network',
@@ -232,6 +283,7 @@
                 resBody:    body ? body.slice(0, BODY_MAX) : null,
                 stack:      callStack,
                 pageUrl:    pageUrl,
+                breadcrumbs: crumbsSnap,
                 timestamp:  ts
               });
             }).catch(function () {
@@ -247,6 +299,7 @@
                 resBody:    null,
                 stack:      callStack,
                 pageUrl:    pageUrl,
+                breadcrumbs: crumbsSnap,
                 timestamp:  ts
               });
             });
@@ -254,6 +307,7 @@
           return response;
         },
         function (err) {
+          addCrumb({ type: 'http', message: method + ' ' + url + ' → 0', timestamp: Date.now() });
           post({
             kind:       'network',
             method:     method,
@@ -266,6 +320,7 @@
             resBody:    null,
             stack:      callStack,
             pageUrl:    pageUrl,
+            breadcrumbs: _breadcrumbs.slice(),
             timestamp:  Date.now()
           });
           throw err;

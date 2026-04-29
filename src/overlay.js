@@ -1244,7 +1244,7 @@
     settingsModalEl.innerHTML =
       '<div class="modal smodal">' +
         '<div class="modal-header">' +
-          '<span class="modal-title">' + ICON_IMG + 'Settings</span>' +
+          '<span class="modal-title">' + ICON_IMG + 'Sentinel</span>' +
           '<label class="sswitch" title="Enable / disable Sentinel">' +
             '<input type="checkbox" data-setting="enabled"><span class="sslider"></span>' +
           '</label>' +
@@ -1257,16 +1257,16 @@
         '<div id="stab-settings" class="stab-panel modal-body smodal-body">' +
           '<div class="ssec">' +
             '<div class="ssec-title">Console</div>' +
-            '<div class="srow"><span>Errors <em>console.error, uncaught, rejections</em></span>' +
+            '<div class="srow" title="Captures console.error(), uncaught exceptions, and unhandled promise rejections"><span>Errors <em>console.error, uncaught, rejections</em></span>' +
               '<label class="sswitch"><input type="checkbox" data-setting="showConsoleErrors"><span class="sslider"></span></label></div>' +
-            '<div class="srow"><span>Warnings <em>console.warn</em></span>' +
+            '<div class="srow" title="Captures console.warn() calls"><span>Warnings <em>console.warn</em></span>' +
               '<label class="sswitch"><input type="checkbox" data-setting="showConsoleWarns"><span class="sslider"></span></label></div>' +
           '</div>' +
           '<div class="ssec">' +
             '<div class="ssec-title">Network</div>' +
-            '<div class="srow"><span>Show failed requests</span>' +
+            '<div class="srow" title="Captures fetch and XHR requests that fail or return an error status code"><span>Show failed requests</span>' +
               '<label class="sswitch"><input type="checkbox" data-setting="showNetwork"><span class="sslider"></span></label></div>' +
-            '<div class="srow" data-depends="showNetwork"><span>Minimum status</span>' +
+            '<div class="srow" data-depends="showNetwork" title="Only capture requests at or above this HTTP status code"><span>Minimum status</span>' +
               '<select class="sselect" data-setting="networkMinStatus">' +
                 '<option value="0">All failures (0, 4xx, 5xx)</option>' +
                 '<option value="400">4xx and 5xx only</option>' +
@@ -1275,12 +1275,12 @@
           '</div>' +
           '<div class="ssec">' +
             '<div class="ssec-title">Behaviour</div>' +
-            '<div class="srow"><span>Clear on navigation</span>' +
+            '<div class="srow" title="Automatically clears the error list when the page URL changes — useful on single-page apps"><span>Clear on navigation</span>' +
               '<label class="sswitch"><input type="checkbox" data-setting="clearOnNav"><span class="sslider"></span></label></div>' +
           '</div>' +
           '<div class="ssec">' +
             '<div class="ssec-title">Watch</div>' +
-            '<div class="srow"><span>Toast cooldown <em>suppress repeats within window</em></span>' +
+            '<div class="srow" title="Minimum time that must pass before Sentinel re-alerts you about the same error"><span>Repeat alert delay <em>suppress repeats within window</em></span>' +
               '<select class="sselect" data-setting="watchCooldownSecs">' +
                 '<option value="0">Off — always notify</option>' +
                 '<option value="15">15 seconds</option>' +

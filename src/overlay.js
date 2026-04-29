@@ -8,6 +8,21 @@
   const ICON16 = chrome.runtime.getURL('icons/icon16.png');
   const ICON_IMG = '<img class="sicon-logo" src="' + ICON16 + '" alt="">';
 
+  const EYE_SLASH =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="12" height="12" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M2 8c1.5-3 3.8-4.5 6-4.5s4.5 1.5 6 4.5c-1.5 3-3.8 4.5-6 4.5S3.5 11 2 8z"/>' +
+    '<circle cx="8" cy="8" r="1.8"/>' +
+    '<line x1="2.5" y1="2.5" x2="13.5" y2="13.5"/>' +
+    '</svg>';
+
+  const BELL =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="12" height="12" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M8 2a5 5 0 0 1 5 5v2.5l1.5 2H1.5L3 9.5V7a5 5 0 0 1 5-5z"/>' +
+    '<path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/>' +
+    '</svg>';
+
   const DEFAULTS = {
     enabled: true,
     showConsoleErrors: true,
@@ -15,17 +30,22 @@
     showNetwork: true,
     networkMinStatus: 0,
     clearOnNav: false,
-    maxEntries: 100
+    maxEntries: 100,
+    watchCooldownSecs: 30
   };
 
   // ── State ──────────────────────────────────────────────────────────────────
 
   let settings    = Object.assign({}, DEFAULTS);
   let ignoreRules = [];
+  let watchRules  = [];
   let entries  = [];
   let nextId   = 0;
   let isExpanded = false;
+  let hasUnseen  = false;
   let domReady   = false;
+
+  let watchToastTimes = {};
 
   let host    = null;
   let shadow  = null;
@@ -35,6 +55,9 @@
   let modalEl     = null;
   let modalBodyEl = null;
   let currentModalEntry = null;
+  let toastEl    = null;
+  let toastTimer = null;
+  let toastEntry = null;
 
   // ── Settings ───────────────────────────────────────────────────────────────
 
@@ -46,9 +69,17 @@
     chrome.storage.sync.get({ ignoreRules: [] }, function (result) {
       ignoreRules = result.ignoreRules || [];
     });
+    chrome.storage.sync.get({ watchRules: [] }, function (result) {
+      watchRules = result.watchRules || [];
+    });
     chrome.storage.onChanged.addListener(function (changes) {
       if (changes.ignoreRules) {
         ignoreRules = changes.ignoreRules.newValue || [];
+        if (domReady) renderList();
+        return;
+      }
+      if (changes.watchRules) {
+        watchRules = changes.watchRules.newValue || [];
         if (domReady) renderList();
         return;
       }
@@ -95,6 +126,22 @@
       : { id: genRuleId(), kind: 'console', messageContains: (e.message || '').slice(0, 80).trim().toLowerCase(), createdAt: Date.now() };
     ignoreRules = ignoreRules.concat([rule]);
     try { chrome.storage.sync.set({ ignoreRules: ignoreRules }); } catch (_) {}
+
+    // Remove any watch rule that would fire for this entry
+    const filtered = watchRules.filter(function (r) {
+      if (r.kind === 'network' && e.kind === 'network') {
+        return !(urlPath(e.url || '') === r.urlPath && r.status === e.status);
+      }
+      if (r.kind === 'console' && (e.kind === 'console' || e.kind === 'uncaught' || e.kind === 'rejection')) {
+        return (e.message || '').toLowerCase().indexOf(r.messageContains) === -1;
+      }
+      return true;
+    });
+    if (filtered.length !== watchRules.length) {
+      watchRules = filtered;
+      try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
+    }
+
     renderList();
     renderBadge();
   }
@@ -103,11 +150,55 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
 
+  // ── Watch rules ────────────────────────────────────────────────────────────
+
+  function findWatchRule(e) {
+    for (var i = 0; i < watchRules.length; i++) {
+      var r = watchRules[i];
+      if (r.kind === 'network' && e.kind === 'network') {
+        if (urlPath(e.url || '') === r.urlPath && r.status === e.status) return r;
+      } else if (r.kind === 'console' &&
+                 (e.kind === 'console' || e.kind === 'uncaught' || e.kind === 'rejection')) {
+        if ((e.message || '').toLowerCase().indexOf(r.messageContains) !== -1) return r;
+      }
+    }
+    return null;
+  }
+
+  function matchesWatchRule(e) { return findWatchRule(e) !== null; }
+
+  function watchEntry(e) {
+    var rule = e.kind === 'network'
+      ? { id: genRuleId(), kind: 'network', urlPath: urlPath(e.url || ''), status: e.status, createdAt: Date.now() }
+      : { id: genRuleId(), kind: 'console', messageContains: (e.message || '').slice(0, 80).trim().toLowerCase(), createdAt: Date.now() };
+    watchRules = watchRules.concat([rule]);
+    try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
+    renderList();
+  }
+
   // ── Entry management ───────────────────────────────────────────────────────
+
+  function withinCooldown(rule) {
+    if (!settings.watchCooldownSecs) return false;
+    return Date.now() - (watchToastTimes[rule.id] || 0) < settings.watchCooldownSecs * 1000;
+  }
+
+  function fireWatchToast(e) {
+    const rule = findWatchRule(e);
+    if (!rule || withinCooldown(rule)) return;
+    watchToastTimes[rule.id] = Date.now();
+    showToast(e);
+  }
 
   function addEntry(ev) {
     if (!shouldCapture(ev)) return;
-    if (matchesIgnoreRule(ev)) return;
+    const watchRule = findWatchRule(ev);
+    const willWatch = watchRule !== null;
+
+    // Watched + within cooldown → suppress entirely
+    if (willWatch && withinCooldown(watchRule)) return;
+
+    if (!willWatch && matchesIgnoreRule(ev)) return;
 
     const last = entries[entries.length - 1];
     if (last && last.kind === ev.kind && last.message === ev.message &&
@@ -115,6 +206,7 @@
       last.count++;
       last.timestamp = ev.timestamp;
       if (domReady) renderList();
+      if (willWatch) fireWatchToast(last);
       return;
     }
 
@@ -140,7 +232,12 @@
     });
 
     if (entries.length > (settings.maxEntries || 100)) entries.shift();
+    if (!isExpanded) hasUnseen = true;
     if (domReady) render();
+    if (willWatch) {
+      watchToastTimes[watchRule.id] = Date.now();
+      showToast(entries[entries.length - 1]);
+    }
   }
 
   // ── Message listener ───────────────────────────────────────────────────────
@@ -204,19 +301,22 @@
       const status  = e.status === 0 ? 'ERR' : String(e.status);
       const path    = escHtml(truncate(urlPath(e.url || ''), 80));
       bodyHtml =
-        '<span class="eicon">⬡</span>' +
+        '<span class="eicon" title="Failed network request">⬡</span>' +
         '<span class="emethod">' + escHtml(e.method || 'REQ') + '</span>' +
         '<span class="estatus ' + statusClass(e.status) + '">' + status + '</span>' +
         '<span class="epath">' + path + '</span>';
     } else {
       bodyHtml =
-        '<span class="eicon">' + entryIcon(e) + '</span>' +
+        '<span class="eicon" title="' + entryTooltip(e) + '">' + entryIcon(e) + '</span>' +
         '<span class="emsg">' + escHtml(truncate(e.message || '', 90)) + '</span>';
     }
 
-    const ignoreBtn = '<button class="pbtn ignore-btn" data-action="ignore" data-id="' + e.id + '" title="Ignore this error">×</button>';
+    const ignoreBtn = '<button class="pbtn entry-btn ignore-btn" data-action="ignore" data-id="' + e.id + '" title="Ignore this error">' + EYE_SLASH + '</button>';
+    const isWatched = matchesWatchRule(e);
+    const watchBtn  = '<button class="pbtn entry-btn watch-btn' + (isWatched ? ' watching' : '') +
+      '" data-action="watch" data-id="' + e.id + '" title="' + (isWatched ? 'Already watching' : 'Watch this error') + '">' + BELL + '</button>';
     return '<div class="entry ' + cls + (hasDetail ? ' expandable' : '') + '" data-id="' + e.id + '">' +
-      '<div class="emain">' + chevron + bodyHtml + countHtml + ignoreBtn + '<span class="etime">' + time + '</span></div>' +
+      '<div class="emain">' + chevron + bodyHtml + countHtml + watchBtn + ignoreBtn + '<span class="etime">' + time + '</span></div>' +
     '</div>';
   }
 
@@ -254,6 +354,45 @@
     currentModalEntry = null;
     modalEl.style.display = 'none';
     Object.assign(host.style, { bottom: '16px', right: '16px', left: '', top: '' });
+  }
+
+  function dismissToast() {
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+    toastEl = null;
+    toastEntry = null;
+  }
+
+  function showToast(e) {
+    dismissToast();
+    toastEntry = e;
+    const cls      = entryClass(e);
+    const iconHtml = '<span class="toast-icon">' + (e.kind === 'network' ? '⬡' : entryIcon(e)) + '</span>';
+    const msgText  = e.kind === 'network'
+      ? (e.method || 'REQ') + ' ' + truncate(urlPath(e.url || ''), 48)
+      : truncate(e.message || '', 60);
+    toastEl = document.createElement('div');
+    toastEl.className = 'sentinel-toast ' + cls;
+    toastEl.innerHTML =
+      '<div class="toast-body">' +
+        iconHtml +
+        '<span class="toast-msg">' + escHtml(msgText) + '</span>' +
+        '<div class="toast-actions">' +
+          '<button class="pbtn" data-action="view-toast">View</button>' +
+          '<button class="pbtn pbtn-close" data-action="dismiss-toast">×</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="toast-progress"><div class="toast-progress-bar"></div></div>';
+    toastEl.addEventListener('click', function (ev) {
+      const btn = ev.target.closest('[data-action]');
+      if (btn) handleAction(btn);
+    });
+    shadow.appendChild(toastEl);
+    requestAnimationFrame(function () {
+      const bar = toastEl && toastEl.querySelector('.toast-progress-bar');
+      if (bar) bar.style.width = '0%';
+    });
+    toastTimer = setTimeout(dismissToast, 6000);
   }
 
   function modalTitle(e) {
@@ -370,6 +509,24 @@
 
     if (action === 'ignore-modal') {
       if (currentModalEntry) { ignoreEntry(currentModalEntry); hideModal(); }
+    }
+
+    if (action === 'watch') {
+      const id = parseInt(btn.getAttribute('data-id'), 10);
+      const e = entries.find(function (x) { return x.id === id; });
+      if (e) watchEntry(e);
+    }
+
+    if (action === 'watch-modal') {
+      if (currentModalEntry) watchEntry(currentModalEntry);
+    }
+
+    if (action === 'view-toast') {
+      if (toastEntry) { const e = toastEntry; dismissToast(); showModal(e); }
+    }
+
+    if (action === 'dismiss-toast') {
+      dismissToast();
     }
   }
 
@@ -554,20 +711,23 @@
 .count { font-size: 10px; color: #505060; flex-shrink: 0; }
 .etime { font-size: 10px; color: #454555; flex-shrink: 0; }
 
-.ignore-btn {
+.entry-btn {
   opacity: 0;
-  padding: 0 5px;
-  font-size: 13px;
-  line-height: 1;
+  padding: 2px 5px;
+  line-height: 0;
   background: transparent;
   border-color: transparent;
   color: #505060;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
   transition: opacity 0.1s, color 0.1s;
   pointer-events: none;
 }
-.entry:hover .ignore-btn { opacity: 1; pointer-events: auto; }
+.entry:hover .entry-btn { opacity: 1; pointer-events: auto; }
 .entry:hover .ignore-btn:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.2); }
+.entry:hover .watch-btn:hover  { color: #ffaa33; background: rgba(255,170,51,0.1); border-color: rgba(255,170,51,0.2); }
+.watch-btn.watching { opacity: 1; color: #ffaa33; pointer-events: auto; }
 
 .empty {
   padding: 18px;
@@ -661,6 +821,43 @@
 }
 .msec-body::-webkit-scrollbar { width: 3px; }
 .msec-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* ── Toast ── */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sentinel-toast {
+  position: fixed;
+  bottom: 80px; right: 16px;
+  z-index: 2147483647;
+  width: 340px; max-width: calc(100vw - 32px);
+  background: rgba(13,13,17,0.97);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: toast-in 0.2s ease;
+}
+.sentinel-toast.err  { border-left: 3px solid #ff5555; }
+.sentinel-toast.warn { border-left: 3px solid #ffaa33; }
+.sentinel-toast.net  { border-left: 3px solid #aa66ff; }
+.sentinel-toast.rej  { border-left: 3px solid #ff9999; }
+.toast-body { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.toast-icon { font-size: 11px; flex-shrink: 0; }
+.sentinel-toast.err  .toast-icon { color: #ff5555; }
+.sentinel-toast.warn .toast-icon { color: #ffaa33; }
+.sentinel-toast.net  .toast-icon { color: #aa66ff; }
+.sentinel-toast.rej  .toast-icon { color: #ff9999; }
+.toast-msg { flex: 1; font-size: 11px; color: #d0d0d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.toast-progress { height: 2px; background: rgba(255,255,255,0.08); }
+.toast-progress-bar { height: 100%; width: 100%; transition: width 6s linear; }
+.sentinel-toast.err  .toast-progress-bar { background: #ff5555; }
+.sentinel-toast.warn .toast-progress-bar { background: #ffaa33; }
+.sentinel-toast.net  .toast-progress-bar { background: #aa66ff; }
+.sentinel-toast.rej  .toast-progress-bar { background: #ff9999; }
 `;
 
   // ── DOM Setup ──────────────────────────────────────────────────────────────
@@ -762,6 +959,7 @@
         '<div class="modal-header">' +
           '<span class="modal-title"></span>' +
           '<button class="pbtn" data-action="replay" style="display:none">↗ Log to Console</button>' +
+          '<button class="pbtn" data-action="watch-modal">Watch</button>' +
           '<button class="pbtn" data-action="ignore-modal">Ignore</button>' +
           '<button class="pbtn" data-action="copy-modal">Copy All</button>' +
           '<button class="pbtn pbtn-close" data-action="close-modal">×</button>' +

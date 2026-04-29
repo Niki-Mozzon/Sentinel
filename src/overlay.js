@@ -71,6 +71,12 @@
   let toastTimer = null;
   let toastEntry = null;
 
+  let ruleEditorEl             = null;
+  let ruleEditorType           = '';
+  let ruleEditorEntry          = null;
+  let ruleEditorSegments       = [];
+  let ruleEditorConsolePattern = '';
+
   // ── Settings ───────────────────────────────────────────────────────────────
 
   try {
@@ -143,43 +149,105 @@
     for (var i = 0; i < ignoreRules.length; i++) {
       var r = ignoreRules[i];
       if (r.kind === 'network' && e.kind === 'network') {
-        if (urlPath(e.url || '') === r.urlPath && r.status === e.status) return true;
+        if (r.pattern) {
+          if (globMatch(r.pattern, urlPathAndSearch(e.url || '')) && r.status === e.status) return true;
+        } else {
+          if (urlPath(e.url || '') === r.urlPath && r.status === e.status) return true;
+        }
       } else if (r.kind === 'console' &&
                  (e.kind === 'console' || e.kind === 'uncaught' || e.kind === 'rejection')) {
-        if ((e.message || '').toLowerCase().indexOf(r.messageContains) !== -1) return true;
+        if (r.pattern) {
+          if (globMatch(r.pattern, e.message || '')) return true;
+        } else {
+          if ((e.message || '').toLowerCase().indexOf(r.messageContains) !== -1) return true;
+        }
       }
     }
     return false;
   }
 
-  function ignoreEntry(e) {
-    var rule = e.kind === 'network'
-      ? { id: genRuleId(), kind: 'network', urlPath: urlPath(e.url || ''), status: e.status, createdAt: Date.now() }
-      : { id: genRuleId(), kind: 'console', messageContains: (e.message || '').slice(0, 80).trim().toLowerCase(), createdAt: Date.now() };
-    ignoreRules = ignoreRules.concat([rule]);
-    try { chrome.storage.sync.set({ ignoreRules: ignoreRules }); } catch (_) {}
-
-    // Remove any watch rule that would fire for this entry
-    const filtered = watchRules.filter(function (r) {
-      if (r.kind === 'network' && e.kind === 'network') {
-        return !(urlPath(e.url || '') === r.urlPath && r.status === e.status);
-      }
-      if (r.kind === 'console' && (e.kind === 'console' || e.kind === 'uncaught' || e.kind === 'rejection')) {
-        return (e.message || '').toLowerCase().indexOf(r.messageContains) === -1;
-      }
-      return true;
-    });
-    if (filtered.length !== watchRules.length) {
-      watchRules = filtered;
-      try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
-    }
-
-    renderList();
-    renderBadge();
-  }
-
   function genRuleId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  function confirmRule(type, entry, pattern) {
+    var rule = entry.kind === 'network'
+      ? { id: genRuleId(), kind: 'network', pattern: pattern, status: entry.status, createdAt: Date.now() }
+      : { id: genRuleId(), kind: 'console', pattern: pattern, createdAt: Date.now() };
+
+    if (type === 'ignore') {
+      ignoreRules = ignoreRules.concat([rule]);
+      try { chrome.storage.sync.set({ ignoreRules: ignoreRules }); } catch (_) {}
+
+      var filtered = watchRules.filter(function (r) {
+        if (r.kind === 'network' && entry.kind === 'network') {
+          if (r.pattern) return !(globMatch(r.pattern, urlPathAndSearch(entry.url || '')) && r.status === entry.status);
+          return !(urlPath(entry.url || '') === r.urlPath && r.status === entry.status);
+        }
+        if (r.kind === 'console' && (entry.kind === 'console' || entry.kind === 'uncaught' || entry.kind === 'rejection')) {
+          if (r.pattern) return !globMatch(r.pattern, entry.message || '');
+          return (entry.message || '').toLowerCase().indexOf(r.messageContains) === -1;
+        }
+        return true;
+      });
+      if (filtered.length !== watchRules.length) {
+        watchRules = filtered;
+        try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
+      }
+      renderList();
+      renderBadge();
+    } else {
+      watchRules = watchRules.concat([rule]);
+      try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
+      renderList();
+    }
+  }
+
+  function parseEditorSegments(entry) {
+    var segments = [];
+    var rawUrl = entry.url || '';
+    var parsed = null;
+    try { parsed = new URL(rawUrl); } catch (_) {}
+
+    var pathname = parsed ? parsed.pathname : rawUrl;
+    var parts = pathname.replace(/^\//, '').split('/');
+    parts.forEach(function (p) {
+      if (p !== '') segments.push({ value: p, wildcard: false, kind: 'path' });
+    });
+
+    if (parsed && parsed.search) {
+      parsed.searchParams.forEach(function (val, key) {
+        segments.push({ value: key + '=' + val, wildcard: false, kind: 'query-val', key: key, val: val });
+      });
+      segments.push({ value: '★ All', wildcard: false, kind: 'query-all' });
+    }
+
+    return segments;
+  }
+
+  function buildEditorPattern(entry, segments) {
+    var rawUrl = entry ? (entry.url || '') : '';
+    var parsed = null;
+    try { parsed = new URL(rawUrl); } catch (_) {}
+
+    var pathSegs  = segments.filter(function (s) { return s.kind === 'path'; });
+    var querySegs = segments.filter(function (s) { return s.kind === 'query-val'; });
+    var allChip   = segments.find(function (s)   { return s.kind === 'query-all'; });
+
+    var pathStr = '/' + pathSegs.map(function (s) { return s.wildcard ? '*' : s.value; }).join('/');
+    if (parsed && parsed.pathname.endsWith('/') && pathStr !== '/') pathStr += '/';
+
+    var queryStr = '';
+    if (querySegs.length > 0) {
+      if (allChip && allChip.wildcard) {
+        queryStr = '?*';
+      } else {
+        var paramParts = querySegs.map(function (s) { return s.key + '=' + (s.wildcard ? '*' : s.val); });
+        queryStr = '?' + paramParts.join('&');
+      }
+    }
+
+    return pathStr + queryStr;
   }
 
   // ── Watch rules ────────────────────────────────────────────────────────────
@@ -188,25 +256,24 @@
     for (var i = 0; i < watchRules.length; i++) {
       var r = watchRules[i];
       if (r.kind === 'network' && e.kind === 'network') {
-        if (urlPath(e.url || '') === r.urlPath && r.status === e.status) return r;
+        if (r.pattern) {
+          if (globMatch(r.pattern, urlPathAndSearch(e.url || '')) && r.status === e.status) return r;
+        } else {
+          if (urlPath(e.url || '') === r.urlPath && r.status === e.status) return r;
+        }
       } else if (r.kind === 'console' &&
                  (e.kind === 'console' || e.kind === 'uncaught' || e.kind === 'rejection')) {
-        if ((e.message || '').toLowerCase().indexOf(r.messageContains) !== -1) return r;
+        if (r.pattern) {
+          if (globMatch(r.pattern, e.message || '')) return r;
+        } else {
+          if ((e.message || '').toLowerCase().indexOf(r.messageContains) !== -1) return r;
+        }
       }
     }
     return null;
   }
 
   function matchesWatchRule(e) { return findWatchRule(e) !== null; }
-
-  function watchEntry(e) {
-    var rule = e.kind === 'network'
-      ? { id: genRuleId(), kind: 'network', urlPath: urlPath(e.url || ''), status: e.status, createdAt: Date.now() }
-      : { id: genRuleId(), kind: 'console', messageContains: (e.message || '').slice(0, 80).trim().toLowerCase(), createdAt: Date.now() };
-    watchRules = watchRules.concat([rule]);
-    try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
-    renderList();
-  }
 
   // ── Entry management ───────────────────────────────────────────────────────
 
@@ -361,6 +428,15 @@
     try { return new URL(url).pathname; } catch (_) { return url; }
   }
 
+  function urlPathAndSearch(url) {
+    try { var u = new URL(url); return u.pathname + u.search; } catch (_) { return url; }
+  }
+
+  function globMatch(pattern, str) {
+    var escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    try { return new RegExp('^' + escaped + '$', 'i').test(str); } catch (_) { return false; }
+  }
+
   function statusClass(status) {
     if (status === 0)                     return 'serr';
     if (status >= 500 && status <= 599)   return 's5xx';
@@ -437,8 +513,8 @@
           var icon = r.kind === 'network' ? '⬡' : '●';
           var cls  = r.kind === 'network' ? 'net' : 'cons';
           var desc = r.kind === 'network'
-            ? r.urlPath + (r.status != null ? ' [' + r.status + ']' : '')
-            : '"' + r.messageContains + '"';
+            ? (r.pattern || r.urlPath || '') + (r.status != null ? ' [' + r.status + ']' : '')
+            : '"' + (r.pattern || r.messageContains || '') + '"';
           return '<div class="srule-row">' +
             '<span class="srule-icon ' + cls + '">' + icon + '</span>' +
             '<span class="srule-desc" title="' + escAttr(desc) + '">' + escHtml(desc) + '</span>' +
@@ -456,8 +532,8 @@
         watchContainer.innerHTML = watchRules.map(function (r) {
           var icon = r.kind === 'network' ? '⬡' : '●';
           var desc = r.kind === 'network'
-            ? r.urlPath + (r.status != null ? ' [' + r.status + ']' : '')
-            : '"' + r.messageContains + '"';
+            ? (r.pattern || r.urlPath || '') + (r.status != null ? ' [' + r.status + ']' : '')
+            : '"' + (r.pattern || r.messageContains || '') + '"';
           return '<div class="srule-row">' +
             '<span class="srule-icon watch">' + icon + '</span>' +
             '<span class="srule-desc" title="' + escAttr(desc) + '">' + escHtml(desc) + '</span>' +
@@ -492,6 +568,111 @@
           '<button class="pbtn srule-del" data-action="del-site" data-hostname="' + escAttr(h) + '">Remove</button>' +
         '</div>';
       }).join('');
+    }
+  }
+
+  function showRuleEditor(type, entry) {
+    ruleEditorType  = type;
+    ruleEditorEntry = entry;
+    if (modalEl.style.display !== 'none') hideModal();
+    if (entry.kind === 'network') {
+      ruleEditorSegments = parseEditorSegments(entry);
+    } else {
+      ruleEditorConsolePattern = entry.message || '';
+    }
+    renderRuleEditor();
+    Object.assign(host.style, { bottom: '0', right: '0', left: '0', top: '0' });
+    ruleEditorEl.style.display = '';
+  }
+
+  function hideRuleEditor() {
+    ruleEditorEl.style.display = 'none';
+    Object.assign(host.style, { bottom: '16px', right: '16px', left: '', top: '' });
+    ruleEditorType           = '';
+    ruleEditorEntry          = null;
+    ruleEditorSegments       = [];
+    ruleEditorConsolePattern = '';
+  }
+
+  function renderRuleEditor() {
+    var e = ruleEditorEntry;
+    if (!e || !ruleEditorEl) return;
+
+    var titleEl     = ruleEditorEl.querySelector('.re-title');
+    var netSection  = ruleEditorEl.querySelector('.re-net-section');
+    var conSection  = ruleEditorEl.querySelector('.re-con-section');
+    var previewEl   = ruleEditorEl.querySelector('#re-preview');
+    var confirmBtn  = ruleEditorEl.querySelector('[data-action="confirm-rule"]');
+
+    titleEl.textContent = ruleEditorType === 'ignore' ? 'Ignore Rule' : 'Watch Rule';
+    confirmBtn.className = 'pbtn ' + (ruleEditorType === 'ignore' ? 're-btn-ignore' : 're-btn-watch');
+
+    if (e.kind === 'network') {
+      netSection.style.display = '';
+      conSection.style.display = 'none';
+
+      var metaRow = netSection.querySelector('.re-meta-row');
+      metaRow.innerHTML =
+        '<span class="re-meta-method">' + escHtml(e.method || 'REQ') + '</span>' +
+        '<span class="re-meta-status ' + statusClass(e.status) + '">' +
+          (e.status === 0 ? 'ERR' : String(e.status)) + '</span>' +
+        '<span class="re-meta-hint">— method &amp; status are fixed</span>';
+
+      var pathChipsEl  = ruleEditorEl.querySelector('#re-path-chips');
+      var queryLabel   = ruleEditorEl.querySelector('#re-query-label');
+      var queryChipsEl = ruleEditorEl.querySelector('#re-query-chips');
+
+      var pathSegs  = ruleEditorSegments.filter(function (s) { return s.kind === 'path'; });
+      var querySegs = ruleEditorSegments.filter(function (s) { return s.kind === 'query-val'; });
+      var allChip   = ruleEditorSegments.find(function (s)   { return s.kind === 'query-all'; });
+
+      if (pathSegs.length === 0) {
+        pathChipsEl.innerHTML = '<span class="re-chip-hint">/ (root)</span>';
+      } else {
+        var pathHtml = '';
+        pathSegs.forEach(function (seg) {
+          var idx     = ruleEditorSegments.indexOf(seg);
+          var chipCls = 're-chip' + (seg.wildcard ? ' re-chip-wild' : '');
+          pathHtml +=
+            '<span class="re-sep">/</span>' +
+            '<span class="' + chipCls + '" data-chip-idx="' + idx + '">' +
+              escHtml(seg.wildcard ? '*' : seg.value) +
+            '</span>';
+        });
+        pathChipsEl.innerHTML = pathHtml;
+      }
+
+      if (querySegs.length === 0) {
+        queryLabel.style.display = 'none';
+        queryChipsEl.innerHTML   = '';
+      } else {
+        queryLabel.style.display = '';
+        var queryHtml = '';
+        querySegs.forEach(function (seg) {
+          var idx     = ruleEditorSegments.indexOf(seg);
+          var chipCls = 're-chip' + (seg.wildcard ? ' re-chip-wild' : '');
+          queryHtml +=
+            '<span class="' + chipCls + '" data-chip-idx="' + idx + '">' +
+              escHtml(seg.wildcard ? seg.key + '=*' : seg.key + '=' + seg.val) +
+            '</span>';
+        });
+        if (allChip) {
+          var allIdx = ruleEditorSegments.indexOf(allChip);
+          var allCls = 're-chip re-chip-all' + (allChip.wildcard ? ' re-chip-wild' : '');
+          queryHtml +=
+            '<span class="' + allCls + '" data-chip-idx="' + allIdx + '">★ All</span>';
+        }
+        queryChipsEl.innerHTML = queryHtml;
+      }
+
+      previewEl.textContent = buildEditorPattern(e, ruleEditorSegments);
+
+    } else {
+      netSection.style.display = 'none';
+      conSection.style.display = '';
+      var ta = ruleEditorEl.querySelector('#re-console-ta');
+      if (document.activeElement !== ta) ta.value = ruleEditorConsolePattern;
+      previewEl.textContent = ruleEditorConsolePattern || '(empty)';
     }
   }
 
@@ -671,21 +852,21 @@
     if (action === 'ignore') {
       const id = parseInt(btn.getAttribute('data-id'), 10);
       const e = entries.find(function (x) { return x.id === id; });
-      if (e) ignoreEntry(e);
+      if (e) showRuleEditor('ignore', e);
     }
 
     if (action === 'ignore-modal') {
-      if (currentModalEntry) { ignoreEntry(currentModalEntry); hideModal(); }
+      if (currentModalEntry) showRuleEditor('ignore', currentModalEntry);
     }
 
     if (action === 'watch') {
       const id = parseInt(btn.getAttribute('data-id'), 10);
       const e = entries.find(function (x) { return x.id === id; });
-      if (e) watchEntry(e);
+      if (e) showRuleEditor('watch', e);
     }
 
     if (action === 'watch-modal') {
-      if (currentModalEntry) watchEntry(currentModalEntry);
+      if (currentModalEntry) showRuleEditor('watch', currentModalEntry);
     }
 
     if (action === 'view-toast') {
@@ -727,6 +908,26 @@
       try { chrome.storage.sync.set({ enabledSites: enabledSites }); } catch (_) {}
       renderBadge();
       renderSettingsModal();
+    }
+
+    if (action === 'close-rule-editor') {
+      hideRuleEditor();
+    }
+
+    if (action === 'confirm-rule') {
+      if (!ruleEditorEntry) return;
+      var pattern;
+      if (ruleEditorEntry.kind === 'network') {
+        pattern = buildEditorPattern(ruleEditorEntry, ruleEditorSegments);
+      } else {
+        var ta = ruleEditorEl && ruleEditorEl.querySelector('#re-console-ta');
+        pattern = (ta ? ta.value : ruleEditorConsolePattern).trim();
+      }
+      if (!pattern) return;
+      var rType  = ruleEditorType;
+      var rEntry = ruleEditorEntry;
+      hideRuleEditor();
+      confirmRule(rType, rEntry, pattern);
     }
   }
 
@@ -1189,6 +1390,96 @@
 }
 .stab:hover { color: #9090a0; }
 .stab.active { color: #aa66ff; border-bottom-color: #aa66ff; }
+
+/* ── Rule Editor Modal ── */
+.reeditor { width: 560px; }
+.re-body {
+  padding: 14px 16px;
+  gap: 12px;
+  display: flex;
+  flex-direction: column;
+}
+.re-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  flex-shrink: 0;
+}
+.re-meta-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.re-meta-method { font-size: 10px; font-weight: 700; color: #606070; letter-spacing: 0.5px; }
+.re-meta-status { font-size: 11px; font-weight: 700; }
+.re-meta-hint { font-size: 10px; color: #404050; font-style: italic; }
+.re-chips-label {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: #505060; margin-bottom: 5px;
+}
+.re-path-chips, .re-query-chips {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 26px;
+}
+.re-sep { color: #404050; font-size: 12px; user-select: none; }
+.re-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #c0c0d0;
+  user-select: none;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.re-chip:hover { background: rgba(170,102,255,0.15); border-color: rgba(170,102,255,0.35); color: #d0c0ff; }
+.re-chip.re-chip-wild {
+  background: rgba(170,102,255,0.25);
+  border-color: rgba(170,102,255,0.5);
+  color: #cc99ff;
+  font-weight: 600;
+}
+.re-chip.re-chip-wild:hover { background: rgba(170,102,255,0.18); border-color: rgba(170,102,255,0.35); color: #b090e0; }
+.re-chip-all { background: rgba(255,170,51,0.08); border-color: rgba(255,170,51,0.2); color: #ffaa33; }
+.re-chip-all:hover { background: rgba(255,170,51,0.18); border-color: rgba(255,170,51,0.4); }
+.re-chip-all.re-chip-wild { background: rgba(255,170,51,0.28); border-color: rgba(255,170,51,0.55); color: #ffcc66; }
+.re-chip-hint { font-size: 11px; color: #404050; font-style: italic; }
+.re-console-ta {
+  width: 100%;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: #c0c0d0;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 8px 10px;
+  resize: vertical;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+.re-console-ta:focus { border-color: rgba(170,102,255,0.5); }
+.re-preview-label {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: #505060; margin-bottom: 4px;
+}
+.re-preview {
+  font-size: 12px; color: #aa66ff;
+  background: rgba(0,0,0,0.3);
+  border-radius: 4px;
+  padding: 8px 10px;
+  word-break: break-all;
+  white-space: pre-wrap;
+  min-height: 32px;
+  border: 1px solid rgba(170,102,255,0.2);
+}
+.re-btn-ignore {
+  background: rgba(255,85,85,0.12); border-color: rgba(255,85,85,0.3); color: #ff8080;
+}
+.re-btn-ignore:hover:not(:disabled) { background: rgba(255,85,85,0.22); color: #ffaaaa; }
+.re-btn-watch {
+  background: rgba(255,170,51,0.12); border-color: rgba(255,170,51,0.3); color: #ffaa33;
+}
+.re-btn-watch:hover:not(:disabled) { background: rgba(255,170,51,0.22); color: #ffcc66; }
 `;
 
   // ── DOM Setup ──────────────────────────────────────────────────────────────
@@ -1315,6 +1606,7 @@
 
     document.addEventListener('keydown', function (event) {
       if (event.key === 'Escape') {
+        if (ruleEditorEl && ruleEditorEl.style.display !== 'none') { hideRuleEditor(); return; }
         if (settingsModalEl && settingsModalEl.style.display !== 'none') { hideSettingsModal(); return; }
         if (modalEl.style.display !== 'none') hideModal();
       }
@@ -1447,10 +1739,86 @@
       }
     });
 
+    // Rule Editor Modal
+    ruleEditorEl = document.createElement('div');
+    ruleEditorEl.className = 'modal-overlay';
+    ruleEditorEl.style.display = 'none';
+    ruleEditorEl.innerHTML =
+      '<div class="modal reeditor">' +
+        '<div class="modal-header">' +
+          '<span class="modal-title re-title"></span>' +
+          '<button class="pbtn pbtn-close" data-action="close-rule-editor">×</button>' +
+        '</div>' +
+        '<div class="modal-body re-body">' +
+          '<div class="re-net-section" style="display:none">' +
+            '<div class="re-meta-row"></div>' +
+            '<div class="re-chips-label">Path segments — click to wildcard</div>' +
+            '<div class="re-path-chips" id="re-path-chips"></div>' +
+            '<div class="re-chips-label" id="re-query-label" style="display:none">Query parameters — click to wildcard</div>' +
+            '<div class="re-query-chips" id="re-query-chips"></div>' +
+          '</div>' +
+          '<div class="re-con-section" style="display:none">' +
+            '<div class="re-chips-label">Pattern — replace parts with *</div>' +
+            '<textarea class="re-console-ta" id="re-console-ta" rows="3" spellcheck="false"></textarea>' +
+          '</div>' +
+          '<div class="re-preview-label">Pattern preview</div>' +
+          '<div class="re-preview" id="re-preview"></div>' +
+        '</div>' +
+        '<div class="re-footer">' +
+          '<button class="pbtn re-btn-ignore" data-action="confirm-rule">Create Rule</button>' +
+          '<button class="pbtn" data-action="close-rule-editor">Cancel</button>' +
+        '</div>' +
+      '</div>';
+
+    ruleEditorEl.addEventListener('click', function (event) {
+      if (!event.target || typeof event.target.closest !== 'function') return;
+      if (event.target === ruleEditorEl) { hideRuleEditor(); return; }
+
+      var btn = event.target.closest('[data-action]');
+      if (btn) { event.stopPropagation(); handleAction(btn); return; }
+
+      var chip = event.target.closest('[data-chip-idx]');
+      if (chip) {
+        var idx = parseInt(chip.getAttribute('data-chip-idx'), 10);
+        var seg = ruleEditorSegments[idx];
+        if (!seg) return;
+
+        if (seg.kind === 'query-all') {
+          var newState = !seg.wildcard;
+          seg.wildcard = newState;
+          ruleEditorSegments.forEach(function (s) {
+            if (s.kind === 'query-val') s.wildcard = newState;
+          });
+        } else if (seg.kind === 'query-val') {
+          seg.wildcard = !seg.wildcard;
+          var allChip = ruleEditorSegments.find(function (s) { return s.kind === 'query-all'; });
+          if (allChip) {
+            var allWild = ruleEditorSegments
+              .filter(function (s) { return s.kind === 'query-val'; })
+              .every(function (s) { return s.wildcard; });
+            allChip.wildcard = allWild;
+          }
+        } else {
+          seg.wildcard = !seg.wildcard;
+        }
+
+        renderRuleEditor();
+      }
+    });
+
+    ruleEditorEl.addEventListener('input', function (event) {
+      if (event.target && event.target.id === 're-console-ta') {
+        ruleEditorConsolePattern = event.target.value;
+        var previewEl = ruleEditorEl.querySelector('#re-preview');
+        if (previewEl) previewEl.textContent = ruleEditorConsolePattern || '(empty)';
+      }
+    });
+
     shadow.appendChild(styleEl);
     shadow.appendChild(root);
     shadow.appendChild(modalEl);
     shadow.appendChild(settingsModalEl);
+    shadow.appendChild(ruleEditorEl);
   }
 
   function init() {

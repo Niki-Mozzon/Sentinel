@@ -63,6 +63,7 @@
   let modalBodyEl = null;
   let currentModalEntry = null;
   let settingsModalEl = null;
+  let activeSettingsTab = 'settings';
   let toastEl    = null;
   let toastTimer = null;
   let toastEntry = null;
@@ -376,6 +377,13 @@
   }
 
   function showSettingsModal() {
+    activeSettingsTab = 'settings';
+    settingsModalEl.querySelectorAll('.stab').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-tab') === 'settings');
+    });
+    settingsModalEl.querySelectorAll('.stab-panel').forEach(function (p) {
+      p.style.display = p.id === 'stab-settings' ? '' : 'none';
+    });
     renderSettingsModal();
     Object.assign(host.style, { bottom: '0', right: '0', left: '0', top: '0' });
     settingsModalEl.style.display = '';
@@ -1073,6 +1081,31 @@
 .srule-del { flex-shrink: 0; }
 .srules-empty { font-size: 11px; color: #404050; padding: 4px 0; }
 .pbtn-icon { padding: 2px 5px; line-height: 0; display: inline-flex; align-items: center; }
+
+/* ── Settings Tabs ── */
+.stabs {
+  display: flex;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.02);
+  flex-shrink: 0;
+}
+.stab {
+  flex: 1;
+  padding: 7px 0;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #505060;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.stab:hover { color: #9090a0; }
+.stab.active { color: #aa66ff; border-bottom-color: #aa66ff; }
 `;
 
   // ── DOM Setup ──────────────────────────────────────────────────────────────
@@ -1217,7 +1250,11 @@
           '</label>' +
           '<button class="pbtn pbtn-close" data-action="close-settings">×</button>' +
         '</div>' +
-        '<div class="modal-body smodal-body">' +
+        '<div class="stabs">' +
+          '<button class="stab active" data-tab="settings">Settings</button>' +
+          '<button class="stab" data-tab="rules">Rules</button>' +
+        '</div>' +
+        '<div id="stab-settings" class="stab-panel modal-body smodal-body">' +
           '<div class="ssec">' +
             '<div class="ssec-title">Console</div>' +
             '<div class="srow"><span>Errors <em>console.error, uncaught, rejections</em></span>' +
@@ -1252,6 +1289,8 @@
                 '<option value="300">5 minutes</option>' +
               '</select></div>' +
           '</div>' +
+        '</div>' +
+        '<div id="stab-rules" class="stab-panel modal-body smodal-body" style="display:none">' +
           '<div class="ssec">' +
             '<div class="ssec-title">Ignore Rules</div>' +
             '<div id="smodal-ignore-rules"></div>' +
@@ -1268,6 +1307,17 @@
       if (!t || typeof t.closest !== 'function') return;
       const btn = t.closest('[data-action]');
       if (btn) { event.stopPropagation(); handleAction(btn); return; }
+      const tab = t.closest('[data-tab]');
+      if (tab) {
+        activeSettingsTab = tab.getAttribute('data-tab');
+        settingsModalEl.querySelectorAll('.stab').forEach(function (b) {
+          b.classList.toggle('active', b.getAttribute('data-tab') === activeSettingsTab);
+        });
+        settingsModalEl.querySelectorAll('.stab-panel').forEach(function (p) {
+          p.style.display = p.id === 'stab-' + activeSettingsTab ? '' : 'none';
+        });
+        return;
+      }
       if (event.target === settingsModalEl) hideSettingsModal();
     });
     settingsModalEl.addEventListener('change', function (event) {

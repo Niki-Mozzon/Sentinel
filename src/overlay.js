@@ -564,8 +564,21 @@
   function buildModalText(e) {
     if (!e) return '';
     var lines = [];
+    if (e.pageUrl) lines.push('PAGE: ' + e.pageUrl);
+    if (settings.captureUserAgent) lines.push('BROWSER: ' + navigator.userAgent);
+    if (e.count > 1) lines.push('SEEN: First ' + formatTime(e.firstSeen) + ' — Last ' + formatTime(e.timestamp) + ' ×' + e.count);
+    if (settings.captureBreadcrumbs && e.breadcrumbs && e.breadcrumbs.length) {
+      lines.push('\nBREADCRUMBS:');
+      e.breadcrumbs.forEach(function (c) {
+        var type = c.type === 'log' ? (c.level || 'log').toUpperCase()
+                 : c.type === 'nav'   ? 'NAV  '
+                 : c.type === 'click' ? 'CLICK'
+                 : 'HTTP ';
+        lines.push(formatTime(c.timestamp) + '  ' + type + '  ' + c.message);
+      });
+    }
     if (e.kind === 'network') {
-      lines.push('REQUEST: ' + (e.method || 'GET') + ' ' + (e.url || ''));
+      lines.push('\nREQUEST: ' + (e.method || 'GET') + ' ' + (e.url || ''));
       if (e.reqHeaders) {
         lines.push('\nREQUEST HEADERS:');
         Object.keys(e.reqHeaders).forEach(function (k) { lines.push(k + ': ' + e.reqHeaders[k]); });
@@ -578,9 +591,9 @@
         Object.keys(e.resHeaders).forEach(function (k) { lines.push(k + ': ' + e.resHeaders[k]); });
       }
       if (e.resBody)  { lines.push('\nRESPONSE BODY:');  lines.push(e.resBody); }
-      if (e.stack)    { lines.push('\nCALL STACK:');     lines.push(e.stack); }
+      if (e.stack)    { lines.push('\nCALL STACK:');      lines.push(e.stack); }
     } else {
-      lines.push('MESSAGE: ' + (e.message || ''));
+      lines.push('\nMESSAGE: ' + (e.message || ''));
       if (e.stack) { lines.push('\nSTACK:'); lines.push(e.stack); }
       else if (e.filename) lines.push('LOCATION: ' + e.filename + ':' + e.lineno);
     }

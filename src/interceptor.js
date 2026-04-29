@@ -79,6 +79,7 @@
         message: serialize(args),
         stack: new Error().stack || null,
         storeId: storeId,
+        pageUrl: window.location.href,
         timestamp: Date.now()
       });
     };
@@ -97,6 +98,7 @@
       lineno: event.lineno || null,
       stack: event.error ? event.error.stack : null,
       storeId: storeId,
+      pageUrl: window.location.href,
       timestamp: Date.now()
     });
   }, true);
@@ -113,6 +115,7 @@
       message: reason instanceof Error ? reason.message : String(reason),
       stack: reason instanceof Error ? reason.stack : null,
       storeId: storeId,
+      pageUrl: window.location.href,
       timestamp: Date.now()
     });
   }, true);
@@ -138,7 +141,8 @@
 
   XMLHttpRequest.prototype.send = function (body) {
     var xhr = this;
-    xhr._en_stack = new Error().stack || null;
+    xhr._en_stack   = new Error().stack || null;
+    xhr._en_pageUrl = window.location.href;
     try {
       if (body != null && body !== '') {
         xhr._en_reqBody = typeof body === 'string' ? body.slice(0, BODY_MAX) : '[non-text body]';
@@ -167,6 +171,7 @@
           resHeaders: parseRawHeaders(xhr.getAllResponseHeaders()),
           resBody:    resBody,
           stack:      xhr._en_stack      || null,
+          pageUrl:    xhr._en_pageUrl    || null,
           timestamp:  Date.now()
         });
       }
@@ -207,6 +212,7 @@
       } catch (_) { reqBody = null; }
 
       var callStack = new Error().stack || null;
+      var pageUrl   = window.location.href;
 
       return _fetch.apply(this, arguments).then(
         function (response) {
@@ -225,6 +231,7 @@
                 resHeaders: resHeaders,
                 resBody:    body ? body.slice(0, BODY_MAX) : null,
                 stack:      callStack,
+                pageUrl:    pageUrl,
                 timestamp:  ts
               });
             }).catch(function () {
@@ -239,6 +246,7 @@
                 resHeaders: resHeaders,
                 resBody:    null,
                 stack:      callStack,
+                pageUrl:    pageUrl,
                 timestamp:  ts
               });
             });
@@ -257,6 +265,7 @@
             resHeaders: null,
             resBody:    null,
             stack:      callStack,
+            pageUrl:    pageUrl,
             timestamp:  Date.now()
           });
           throw err;

@@ -38,7 +38,8 @@
     networkMinStatus: 0,
     clearOnNav: false,
     maxEntries: 100,
-    watchCooldownSecs: 30
+    watchCooldownSecs: 30,
+    captureUserAgent: true
   };
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -245,6 +246,8 @@
       reqBody:    ev.reqBody    || null,
       resHeaders: ev.resHeaders || null,
       resBody:    ev.resBody    || null,
+      pageUrl:    ev.pageUrl    || null,
+      firstSeen:  ev.timestamp  || Date.now(),
       timestamp:  ev.timestamp  || Date.now(),
       count:      1
     });
@@ -496,6 +499,11 @@
 
   function buildModalHtml(e) {
     var sections = [];
+    if (e.pageUrl) sections.push(modalSection('Page', escHtml(e.pageUrl)));
+    if (settings.captureUserAgent) sections.push(modalSection('Browser', escHtml(navigator.userAgent)));
+    if (e.count > 1) sections.push(modalSection('Seen', escHtml(
+      'First: ' + formatTime(e.firstSeen) + '  —  Last: ' + formatTime(e.timestamp) + '  ×' + e.count
+    )));
     if (e.kind === 'network') {
       sections.push(modalSection('Request', escHtml((e.method || 'GET') + ' ' + (e.url || ''))));
       if (e.reqHeaders) sections.push(modalSection('Request Headers', formatHeaders(e.reqHeaders)));
@@ -1261,6 +1269,8 @@
               '<label class="sswitch"><input type="checkbox" data-setting="showConsoleErrors"><span class="sslider"></span></label></div>' +
             '<div class="srow" title="Captures console.warn() calls"><span>Warnings <em>console.warn</em></span>' +
               '<label class="sswitch"><input type="checkbox" data-setting="showConsoleWarns"><span class="sslider"></span></label></div>' +
+            '<div class="srow" title="Records the browser name and version alongside each error"><span>Capture browser info <em>user agent</em></span>' +
+              '<label class="sswitch"><input type="checkbox" data-setting="captureUserAgent"><span class="sslider"></span></label></div>' +
           '</div>' +
           '<div class="ssec">' +
             '<div class="ssec-title">Network</div>' +

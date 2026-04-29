@@ -682,6 +682,22 @@
 .plist::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
 
 /* ── Entries ── */
+@keyframes radar-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(350%); }
+}
+.panel::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 25%;
+  height: 2px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(170,102,255,0.8), transparent);
+  animation: radar-sweep 3s ease-in-out infinite alternate;
+  z-index: 2;
+}
 .entry {
   padding: 5px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.035);

@@ -23,6 +23,13 @@
     '<path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/>' +
     '</svg>';
 
+  const GEAR =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="12" height="12" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="8" cy="8" r="2.5"/>' +
+    '<path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06"/>' +
+    '</svg>';
+
   const DEFAULTS = {
     enabled: true,
     showConsoleErrors: true,
@@ -55,11 +62,18 @@
   let modalEl     = null;
   let modalBodyEl = null;
   let currentModalEntry = null;
+  let settingsModalEl = null;
   let toastEl    = null;
   let toastTimer = null;
   let toastEntry = null;
 
   // ── Settings ───────────────────────────────────────────────────────────────
+
+  try {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      if (msg && msg.type === '__SENTINEL_OPEN_SETTINGS__') showSettingsModal();
+    });
+  } catch (_) {}
 
   try {
     chrome.storage.sync.get(DEFAULTS, function (result) {
@@ -76,15 +90,18 @@
       if (changes.ignoreRules) {
         ignoreRules = changes.ignoreRules.newValue || [];
         if (domReady) renderList();
+        if (settingsModalEl && settingsModalEl.style.display !== 'none') renderSettingsModal();
         return;
       }
       if (changes.watchRules) {
         watchRules = changes.watchRules.newValue || [];
         if (domReady) renderList();
+        if (settingsModalEl && settingsModalEl.style.display !== 'none') renderSettingsModal();
         return;
       }
       Object.keys(changes).forEach(function (k) { settings[k] = changes[k].newValue; });
       if (domReady) render();
+      if (settingsModalEl && settingsModalEl.style.display !== 'none') renderSettingsModal();
     });
   } catch (_) {}
 
@@ -358,6 +375,71 @@
     Object.assign(host.style, { bottom: '16px', right: '16px', left: '', top: '' });
   }
 
+  function showSettingsModal() {
+    renderSettingsModal();
+    Object.assign(host.style, { bottom: '0', right: '0', left: '0', top: '0' });
+    settingsModalEl.style.display = '';
+  }
+
+  function hideSettingsModal() {
+    settingsModalEl.style.display = 'none';
+    Object.assign(host.style, { bottom: '16px', right: '16px', left: '', top: '' });
+  }
+
+  function renderSettingsModal() {
+    var cbs = settingsModalEl.querySelectorAll('input[data-setting]');
+    cbs.forEach(function (cb) {
+      var key = cb.getAttribute('data-setting');
+      cb.checked = !!settings[key];
+    });
+    var sels = settingsModalEl.querySelectorAll('select[data-setting]');
+    sels.forEach(function (sel) {
+      var key = sel.getAttribute('data-setting');
+      sel.value = String(settings[key] != null ? settings[key] : '');
+    });
+    var threshRow = settingsModalEl.querySelector('.srow[data-depends="showNetwork"]');
+    if (threshRow) threshRow.classList.toggle('sdisabled', !settings.showNetwork);
+
+    var ignoreContainer = settingsModalEl.querySelector('#smodal-ignore-rules');
+    if (ignoreContainer) {
+      if (ignoreRules.length === 0) {
+        ignoreContainer.innerHTML = '<div class="srules-empty">No ignore rules</div>';
+      } else {
+        ignoreContainer.innerHTML = ignoreRules.map(function (r) {
+          var icon = r.kind === 'network' ? '⬡' : '●';
+          var cls  = r.kind === 'network' ? 'net' : 'cons';
+          var desc = r.kind === 'network'
+            ? r.urlPath + (r.status != null ? ' [' + r.status + ']' : '')
+            : '"' + r.messageContains + '"';
+          return '<div class="srule-row">' +
+            '<span class="srule-icon ' + cls + '">' + icon + '</span>' +
+            '<span class="srule-desc" title="' + escAttr(desc) + '">' + escHtml(desc) + '</span>' +
+            '<button class="pbtn srule-del" data-action="del-ignore-rule" data-rule-id="' + escAttr(r.id) + '">Delete</button>' +
+          '</div>';
+        }).join('');
+      }
+    }
+
+    var watchContainer = settingsModalEl.querySelector('#smodal-watch-rules');
+    if (watchContainer) {
+      if (watchRules.length === 0) {
+        watchContainer.innerHTML = '<div class="srules-empty">No watch rules</div>';
+      } else {
+        watchContainer.innerHTML = watchRules.map(function (r) {
+          var icon = r.kind === 'network' ? '⬡' : '●';
+          var desc = r.kind === 'network'
+            ? r.urlPath + (r.status != null ? ' [' + r.status + ']' : '')
+            : '"' + r.messageContains + '"';
+          return '<div class="srule-row">' +
+            '<span class="srule-icon watch">' + icon + '</span>' +
+            '<span class="srule-desc" title="' + escAttr(desc) + '">' + escHtml(desc) + '</span>' +
+            '<button class="pbtn srule-del" data-action="del-watch-rule" data-watch-rule-id="' + escAttr(r.id) + '">Delete</button>' +
+          '</div>';
+        }).join('');
+      }
+    }
+  }
+
   function dismissToast() {
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
     if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
@@ -529,6 +611,31 @@
 
     if (action === 'dismiss-toast') {
       dismissToast();
+    }
+
+    if (action === 'open-settings') {
+      showSettingsModal();
+    }
+
+    if (action === 'close-settings') {
+      hideSettingsModal();
+    }
+
+    if (action === 'del-ignore-rule') {
+      const ruleId = btn.getAttribute('data-rule-id');
+      ignoreRules = ignoreRules.filter(function (r) { return r.id !== ruleId; });
+      try { chrome.storage.sync.set({ ignoreRules: ignoreRules }); } catch (_) {}
+      renderList();
+      renderBadge();
+      renderSettingsModal();
+    }
+
+    if (action === 'del-watch-rule') {
+      const ruleId = btn.getAttribute('data-watch-rule-id');
+      watchRules = watchRules.filter(function (r) { return r.id !== ruleId; });
+      try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
+      renderList();
+      renderSettingsModal();
     }
   }
 
@@ -887,6 +994,85 @@
 .sentinel-toast.warn .toast-progress-bar { background: #ffaa33; }
 .sentinel-toast.net  .toast-progress-bar { background: #aa66ff; }
 .sentinel-toast.rej  .toast-progress-bar { background: #ff9999; }
+
+/* ── Settings Modal ── */
+.smodal { width: 520px; }
+.smodal-body { padding: 14px 16px; gap: 14px; }
+.ssec-title {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #505060;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.srow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 12px;
+  color: #c0c0d0;
+  gap: 12px;
+}
+.srow > span { flex: 1; }
+.srow em { display: block; font-style: normal; font-size: 10px; color: #505060; }
+.srow.sdisabled { opacity: 0.4; pointer-events: none; }
+.sswitch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.sswitch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.sslider {
+  display: block;
+  width: 32px;
+  height: 18px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 9px;
+  position: relative;
+  transition: background 0.2s;
+}
+.sslider::before {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #888;
+  border-radius: 50%;
+  top: 3px;
+  left: 3px;
+  transition: transform 0.2s, background 0.2s;
+}
+.sswitch input:checked + .sslider { background: rgba(170,102,255,0.5); }
+.sswitch input:checked + .sslider::before { transform: translateX(14px); background: #aa66ff; }
+.sselect {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #d0d0d8;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.sselect:focus { border-color: rgba(170,102,255,0.5); }
+.srule-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.srule-row:last-child { border-bottom: none; }
+.srule-icon { font-size: 10px; flex-shrink: 0; width: 14px; text-align: center; }
+.srule-icon.net   { color: #aa66ff; }
+.srule-icon.cons  { color: #ff8080; }
+.srule-icon.watch { color: #ffaa33; }
+.srule-desc { flex: 1; font-size: 11px; color: #909098; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srule-del { flex-shrink: 0; }
+.srules-empty { font-size: 11px; color: #404050; padding: 4px 0; }
+.pbtn-icon { padding: 2px 5px; line-height: 0; display: inline-flex; align-items: center; }
 `;
 
   // ── DOM Setup ──────────────────────────────────────────────────────────────
@@ -920,12 +1106,16 @@
     header.className = 'pheader';
     header.innerHTML =
       ICON_IMG + '<span class="ptitle">Sentinel</span>' +
+      '<button class="pbtn pbtn-icon" id="en-settings" title="Settings">' + GEAR + '</button>' +
       '<button class="pbtn" id="en-clear">Clear</button>' +
       '<button class="pbtn pbtn-close" id="en-close">×</button>';
 
     listEl = document.createElement('div');
     listEl.className = 'plist';
 
+    header.querySelector('#en-settings').addEventListener('click', function () {
+      showSettingsModal();
+    });
     header.querySelector('#en-clear').addEventListener('click', function () {
       entries = [];
       renderList();
@@ -1008,12 +1198,95 @@
     });
 
     document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape' && modalEl.style.display !== 'none') hideModal();
+      if (event.key === 'Escape') {
+        if (settingsModalEl && settingsModalEl.style.display !== 'none') { hideSettingsModal(); return; }
+        if (modalEl.style.display !== 'none') hideModal();
+      }
+    });
+
+    // Settings Modal
+    settingsModalEl = document.createElement('div');
+    settingsModalEl.className = 'modal-overlay';
+    settingsModalEl.style.display = 'none';
+    settingsModalEl.innerHTML =
+      '<div class="modal smodal">' +
+        '<div class="modal-header">' +
+          '<span class="modal-title">' + ICON_IMG + 'Settings</span>' +
+          '<label class="sswitch" title="Enable / disable Sentinel">' +
+            '<input type="checkbox" data-setting="enabled"><span class="sslider"></span>' +
+          '</label>' +
+          '<button class="pbtn pbtn-close" data-action="close-settings">×</button>' +
+        '</div>' +
+        '<div class="modal-body smodal-body">' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Console</div>' +
+            '<div class="srow"><span>Errors <em>console.error, uncaught, rejections</em></span>' +
+              '<label class="sswitch"><input type="checkbox" data-setting="showConsoleErrors"><span class="sslider"></span></label></div>' +
+            '<div class="srow"><span>Warnings <em>console.warn</em></span>' +
+              '<label class="sswitch"><input type="checkbox" data-setting="showConsoleWarns"><span class="sslider"></span></label></div>' +
+          '</div>' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Network</div>' +
+            '<div class="srow"><span>Show failed requests</span>' +
+              '<label class="sswitch"><input type="checkbox" data-setting="showNetwork"><span class="sslider"></span></label></div>' +
+            '<div class="srow" data-depends="showNetwork"><span>Minimum status</span>' +
+              '<select class="sselect" data-setting="networkMinStatus">' +
+                '<option value="0">All failures (0, 4xx, 5xx)</option>' +
+                '<option value="400">4xx and 5xx only</option>' +
+                '<option value="500">5xx only</option>' +
+              '</select></div>' +
+          '</div>' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Behaviour</div>' +
+            '<div class="srow"><span>Clear on navigation</span>' +
+              '<label class="sswitch"><input type="checkbox" data-setting="clearOnNav"><span class="sslider"></span></label></div>' +
+          '</div>' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Watch</div>' +
+            '<div class="srow"><span>Toast cooldown <em>suppress repeats within window</em></span>' +
+              '<select class="sselect" data-setting="watchCooldownSecs">' +
+                '<option value="0">Off — always notify</option>' +
+                '<option value="15">15 seconds</option>' +
+                '<option value="30">30 seconds</option>' +
+                '<option value="60">1 minute</option>' +
+                '<option value="300">5 minutes</option>' +
+              '</select></div>' +
+          '</div>' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Ignore Rules</div>' +
+            '<div id="smodal-ignore-rules"></div>' +
+          '</div>' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Watch Rules</div>' +
+            '<div id="smodal-watch-rules"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    settingsModalEl.addEventListener('click', function (event) {
+      const t = event.target;
+      if (!t || typeof t.closest !== 'function') return;
+      const btn = t.closest('[data-action]');
+      if (btn) { event.stopPropagation(); handleAction(btn); return; }
+      if (event.target === settingsModalEl) hideSettingsModal();
+    });
+    settingsModalEl.addEventListener('change', function (event) {
+      const input = event.target;
+      const key = input.getAttribute('data-setting');
+      if (!key) return;
+      const value = input.type === 'checkbox' ? input.checked : Number(input.value);
+      settings[key] = value;
+      try { const patch = {}; patch[key] = value; chrome.storage.sync.set(patch); } catch (_) {}
+      if (key === 'showNetwork') {
+        const threshRow = settingsModalEl.querySelector('.srow[data-depends="showNetwork"]');
+        if (threshRow) threshRow.classList.toggle('sdisabled', !value);
+      }
     });
 
     shadow.appendChild(styleEl);
     shadow.appendChild(root);
     shadow.appendChild(modalEl);
+    shadow.appendChild(settingsModalEl);
   }
 
   function init() {

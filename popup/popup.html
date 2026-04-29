@@ -10,88 +10,11 @@
   <header>
     <span class="logo">◉</span>
     <span class="title">Sentinel</span>
-    <label class="toggle" title="Enable / disable overlay">
-      <input type="checkbox" id="enabled">
-      <span class="slider"></span>
-    </label>
   </header>
-
-  <section>
-    <h3>Console</h3>
-    <label class="row">
-      <span>Errors <em>(console.error, uncaught, rejections)</em></span>
-      <label class="toggle">
-        <input type="checkbox" id="showConsoleErrors">
-        <span class="slider"></span>
-      </label>
-    </label>
-    <label class="row">
-      <span>Warnings <em>(console.warn)</em></span>
-      <label class="toggle">
-        <input type="checkbox" id="showConsoleWarns">
-        <span class="slider"></span>
-      </label>
-    </label>
-  </section>
-
-  <section>
-    <h3>Network</h3>
-    <label class="row">
-      <span>Show failed requests</span>
-      <label class="toggle">
-        <input type="checkbox" id="showNetwork">
-        <span class="slider"></span>
-      </label>
-    </label>
-    <label class="row" id="row-threshold">
-      <span>Minimum status</span>
-      <select id="networkMinStatus">
-        <option value="0">All failures (0, 4xx, 5xx)</option>
-        <option value="400">4xx and 5xx only</option>
-        <option value="500">5xx only</option>
-      </select>
-    </label>
-  </section>
-
-  <section>
-    <h3>Behaviour</h3>
-    <label class="row">
-      <span>Clear on navigation</span>
-      <label class="toggle">
-        <input type="checkbox" id="clearOnNav">
-        <span class="slider"></span>
-      </label>
-    </label>
-  </section>
-
-  <section>
-    <h3>Watch</h3>
-    <label class="row">
-      <span>Toast cooldown <em>(suppress repeats within window)</em></span>
-      <select id="watchCooldownSecs">
-        <option value="0">Off — always notify</option>
-        <option value="15">15 seconds</option>
-        <option value="30">30 seconds</option>
-        <option value="60">1 minute</option>
-        <option value="300">5 minutes</option>
-      </select>
-    </label>
-  </section>
-
-  <section id="section-rules">
-    <h3>Ignore Rules</h3>
-    <div id="rules-list">
-      <div class="rules-empty">No ignore rules</div>
-    </div>
-  </section>
-
-  <section id="section-watch-rules">
-    <h3>Watch Rules</h3>
-    <div id="watch-rules-list">
-      <div class="rules-empty">No watch rules</div>
-    </div>
-  </section>
-
+  <div class="launcher">
+    <button id="open-settings">⚙ Open Settings</button>
+    <p>Opens Sentinel's settings panel on the current page.</p>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

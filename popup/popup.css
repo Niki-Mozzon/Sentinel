@@ -148,3 +148,4 @@ select:focus {
   transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 .rule-del:hover { background: rgba(255,85,85,0.12); border-color: rgba(255,85,85,0.3); color: #ff6666; }
+.watch-rule-icon { color: #ffaa33; }

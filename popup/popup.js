@@ -6,10 +6,11 @@ const DEFAULTS = {
   showConsoleWarns: false,
   showNetwork: true,
   networkMinStatus: 0,
-  clearOnNav: false
+  clearOnNav: false,
+  watchCooldownSecs: 30
 };
 
-const ids = ['enabled', 'showConsoleErrors', 'showConsoleWarns', 'showNetwork', 'networkMinStatus', 'clearOnNav'];
+const ids = ['enabled', 'showConsoleErrors', 'showConsoleWarns', 'showNetwork', 'networkMinStatus', 'clearOnNav', 'watchCooldownSecs'];
 
 function el(id) { return document.getElementById(id); }
 
@@ -93,3 +94,44 @@ ids.forEach(id => {
     if (id === 'showNetwork') updateThresholdVisibility(value);
   });
 });
+
+// ── Watch rules ───────────────────────────────────────────────────────────────
+
+function renderWatchRules(rules) {
+  const listEl = document.getElementById('watch-rules-list');
+  if (!listEl) return;
+  if (!rules || rules.length === 0) {
+    listEl.innerHTML = '<div class="rules-empty">No watch rules</div>';
+    return;
+  }
+  listEl.innerHTML = rules.map(function (r) {
+    const icon = r.kind === 'network' ? '⬡' : '●';
+    const cls  = r.kind === 'network' ? 'net' : 'cons';
+    const desc = r.kind === 'network'
+      ? r.urlPath + (r.status != null ? ' [' + r.status + ']' : '')
+      : '"' + r.messageContains + '"';
+    return '<div class="rule-row">' +
+      '<span class="rule-icon watch-rule-icon ' + cls + '">' + icon + '</span>' +
+      '<span class="rule-desc" title="' + esc(desc) + '">' + esc(desc) + '</span>' +
+      '<button class="rule-del" data-watch-rule-id="' + esc(r.id) + '">Delete</button>' +
+    '</div>';
+  }).join('');
+}
+
+chrome.storage.sync.get({ watchRules: [] }, function (r) { renderWatchRules(r.watchRules); });
+
+chrome.storage.onChanged.addListener(function (changes) {
+  if (changes.watchRules) renderWatchRules(changes.watchRules.newValue || []);
+});
+
+const watchRulesListEl = document.getElementById('watch-rules-list');
+if (watchRulesListEl) {
+  watchRulesListEl.addEventListener('click', function (event) {
+    const btn = event.target.closest('.rule-del[data-watch-rule-id]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-watch-rule-id');
+    chrome.storage.sync.get({ watchRules: [] }, function (r) {
+      chrome.storage.sync.set({ watchRules: (r.watchRules || []).filter(function (x) { return x.id !== id; }) });
+    });
+  });
+}

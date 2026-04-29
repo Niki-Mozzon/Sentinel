@@ -64,10 +64,31 @@
     </label>
   </section>
 
+  <section>
+    <h3>Watch</h3>
+    <label class="row">
+      <span>Toast cooldown <em>(suppress repeats within window)</em></span>
+      <select id="watchCooldownSecs">
+        <option value="0">Off — always notify</option>
+        <option value="15">15 seconds</option>
+        <option value="30">30 seconds</option>
+        <option value="60">1 minute</option>
+        <option value="300">5 minutes</option>
+      </select>
+    </label>
+  </section>
+
   <section id="section-rules">
     <h3>Ignore Rules</h3>
     <div id="rules-list">
       <div class="rules-empty">No ignore rules</div>
+    </div>
+  </section>
+
+  <section id="section-watch-rules">
+    <h3>Watch Rules</h3>
+    <div id="watch-rules-list">
+      <div class="rules-empty">No watch rules</div>
     </div>
   </section>
 

@@ -975,7 +975,11 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: flex-end;
+  min-height: 100%;
   pointer-events: none;
+  position: relative;
+  z-index: 2;
 }
 
 /* ── Badge ── */
@@ -1172,7 +1176,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2147483647;
+  z-index: 1;
   pointer-events: auto;
 }
 .modal {
@@ -1566,6 +1570,8 @@
       if (btn) { handleAction(btn); return; }
       const entryEl = t.closest('.entry[data-id]');
       if (entryEl) {
+        if ((settingsModalEl && settingsModalEl.style.display !== 'none') ||
+            (ruleEditorEl    && ruleEditorEl.style.display    !== 'none')) return;
         const id = parseInt(entryEl.getAttribute('data-id'), 10);
         const e = entries.find(function (x) { return x.id === id; });
         if (e && hasExpandableDetail(e)) showModal(e);

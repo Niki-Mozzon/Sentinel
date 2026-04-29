@@ -45,9 +45,10 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
 
-  let settings    = Object.assign({}, DEFAULTS);
-  let ignoreRules = [];
-  let watchRules  = [];
+  let settings     = Object.assign({}, DEFAULTS);
+  let ignoreRules  = [];
+  let watchRules   = [];
+  let enabledSites = ['localhost', '127.0.0.1'];
   let entries  = [];
   let nextId   = 0;
   let isExpanded = false;
@@ -89,6 +90,10 @@
     chrome.storage.sync.get({ watchRules: [] }, function (result) {
       watchRules = result.watchRules || [];
     });
+    chrome.storage.sync.get({ enabledSites: ['localhost', '127.0.0.1'] }, function (result) {
+      enabledSites = result.enabledSites || ['localhost', '127.0.0.1'];
+      if (domReady) render();
+    });
     chrome.storage.onChanged.addListener(function (changes) {
       if (changes.ignoreRules) {
         ignoreRules = changes.ignoreRules.newValue || [];
@@ -102,6 +107,12 @@
         if (settingsModalEl && settingsModalEl.style.display !== 'none') renderSettingsModal();
         return;
       }
+      if (changes.enabledSites) {
+        enabledSites = changes.enabledSites.newValue || [];
+        if (domReady) render();
+        if (settingsModalEl && settingsModalEl.style.display !== 'none') renderSettingsModal();
+        return;
+      }
       Object.keys(changes).forEach(function (k) { settings[k] = changes[k].newValue; });
       if (domReady) render();
       if (settingsModalEl && settingsModalEl.style.display !== 'none') renderSettingsModal();
@@ -112,6 +123,7 @@
 
   function shouldCapture(ev) {
     if (!settings.enabled) return false;
+    if (enabledSites.indexOf(window.location.hostname) === -1) return false;
     if (ev.kind === 'console' || ev.kind === 'uncaught' || ev.kind === 'rejection') {
       return ev.level === 'warn' ? settings.showConsoleWarns : settings.showConsoleErrors;
     }
@@ -296,7 +308,7 @@
       else errors++;
     });
     const visible = errors + warns + network;
-    if (!settings.enabled || visible === 0) { badgeEl.style.display = 'none'; return; }
+    if (!settings.enabled || enabledSites.indexOf(window.location.hostname) === -1 || visible === 0) { badgeEl.style.display = 'none'; return; }
     badgeEl.style.display = '';
     badgeEl.classList.toggle('unseen', hasUnseen);
     badgeEl.innerHTML = ICON_IMG + '<span class="bcount">' + visible + '</span>';
@@ -410,8 +422,11 @@
       var key = sel.getAttribute('data-setting');
       sel.value = String(settings[key] != null ? settings[key] : '');
     });
+    var siteToggle = settingsModalEl.querySelector('input[data-site-enabled]');
+    if (siteToggle) siteToggle.checked = enabledSites.indexOf(window.location.hostname) !== -1;
     var threshRow = settingsModalEl.querySelector('.srow[data-depends="showNetwork"]');
     if (threshRow) threshRow.classList.toggle('sdisabled', !settings.showNetwork);
+    renderSitesTab();
 
     var ignoreContainer = settingsModalEl.querySelector('#smodal-ignore-rules');
     if (ignoreContainer) {
@@ -450,6 +465,33 @@
           '</div>';
         }).join('');
       }
+    }
+  }
+
+  function renderSitesTab() {
+    var currentSiteEl = settingsModalEl.querySelector('#smodal-current-site');
+    var listEl2 = settingsModalEl.querySelector('#smodal-sites-list');
+    if (!currentSiteEl || !listEl2) return;
+
+    var hostname = window.location.hostname;
+    var isEnabled = enabledSites.indexOf(hostname) !== -1;
+    currentSiteEl.innerHTML =
+      '<div class="srow">' +
+        '<span>' + escHtml(hostname || '(unknown)') + '</span>' +
+        '<label class="sswitch" title="Enable Sentinel on this site">' +
+          '<input type="checkbox" data-site-enabled-tab' + (isEnabled ? ' checked' : '') + '><span class="sslider"></span>' +
+        '</label>' +
+      '</div>';
+
+    if (enabledSites.length === 0) {
+      listEl2.innerHTML = '<div class="srules-empty">No sites enabled</div>';
+    } else {
+      listEl2.innerHTML = enabledSites.map(function (h) {
+        return '<div class="srule-row">' +
+          '<span class="srule-desc">' + escHtml(h) + '</span>' +
+          '<button class="pbtn srule-del" data-action="del-site" data-hostname="' + escAttr(h) + '">Remove</button>' +
+        '</div>';
+      }).join('');
     }
   }
 
@@ -676,6 +718,14 @@
       watchRules = watchRules.filter(function (r) { return r.id !== ruleId; });
       try { chrome.storage.sync.set({ watchRules: watchRules }); } catch (_) {}
       renderList();
+      renderSettingsModal();
+    }
+
+    if (action === 'del-site') {
+      const hostname = btn.getAttribute('data-hostname');
+      enabledSites = enabledSites.filter(function (h) { return h !== hostname; });
+      try { chrome.storage.sync.set({ enabledSites: enabledSites }); } catch (_) {}
+      renderBadge();
       renderSettingsModal();
     }
   }
@@ -1278,14 +1328,15 @@
       '<div class="modal smodal">' +
         '<div class="modal-header">' +
           '<span class="modal-title">' + ICON_IMG + 'Sentinel</span>' +
-          '<label class="sswitch" title="Enable / disable Sentinel">' +
-            '<input type="checkbox" data-setting="enabled"><span class="sslider"></span>' +
+          '<label class="sswitch" title="Enable Sentinel on this site">' +
+            '<input type="checkbox" data-site-enabled><span class="sslider"></span>' +
           '</label>' +
           '<button class="pbtn pbtn-close" data-action="close-settings">×</button>' +
         '</div>' +
         '<div class="stabs">' +
           '<button class="stab active" data-tab="settings">Settings</button>' +
           '<button class="stab" data-tab="rules">Rules</button>' +
+          '<button class="stab" data-tab="sites">Sites</button>' +
         '</div>' +
         '<div id="stab-settings" class="stab-panel modal-body smodal-body">' +
           '<div class="ssec">' +
@@ -1337,6 +1388,16 @@
             '<div id="smodal-watch-rules"></div>' +
           '</div>' +
         '</div>' +
+        '<div id="stab-sites" class="stab-panel modal-body smodal-body" style="display:none">' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Current Site</div>' +
+            '<div id="smodal-current-site"></div>' +
+          '</div>' +
+          '<div class="ssec">' +
+            '<div class="ssec-title">Enabled Sites</div>' +
+            '<div id="smodal-sites-list"></div>' +
+          '</div>' +
+        '</div>' +
       '</div>';
 
     settingsModalEl.addEventListener('click', function (event) {
@@ -1359,6 +1420,22 @@
     });
     settingsModalEl.addEventListener('change', function (event) {
       const input = event.target;
+      if (input.hasAttribute('data-site-enabled') || input.hasAttribute('data-site-enabled-tab')) {
+        const hostname = window.location.hostname;
+        if (input.checked) {
+          if (enabledSites.indexOf(hostname) === -1) enabledSites = enabledSites.concat([hostname]);
+        } else {
+          enabledSites = enabledSites.filter(function (h) { return h !== hostname; });
+        }
+        try { chrome.storage.sync.set({ enabledSites: enabledSites }); } catch (_) {}
+        const isNowEnabled = enabledSites.indexOf(hostname) !== -1;
+        settingsModalEl.querySelectorAll('input[data-site-enabled], input[data-site-enabled-tab]').forEach(function (t) {
+          t.checked = isNowEnabled;
+        });
+        renderBadge();
+        renderSitesTab();
+        return;
+      }
       const key = input.getAttribute('data-setting');
       if (!key) return;
       const value = input.type === 'checkbox' ? input.checked : Number(input.value);
